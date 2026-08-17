@@ -145,8 +145,15 @@ export function registerSignerManager(name = MANAGER, authId = 1) {
   ).result;
 }
 
-/** Create a bond and allowlist the pool for `allowanceSats`. */
-export function setupBond(index = BOND_INDEX, allowanceSats = ALLOWANCE_SATS) {
+/**
+ * Create a bond and allowlist the pool for `allowanceSats`. `ratio` prices
+ * sats in uSTX per 100 sats -- raise it to model Bitcoin gaining on STX.
+ */
+export function setupBond(
+  index = BOND_INDEX,
+  allowanceSats = ALLOWANCE_SATS,
+  ratio = STX_VALUE_RATIO,
+) {
   // `setup-bond` is only allowed within 2 cycles of the bond start.
   advanceToBurnHeight(bondStartHeight(index) - 2 * CYCLE_LENGTH);
 
@@ -156,7 +163,7 @@ export function setupBond(index = BOND_INDEX, allowanceSats = ALLOWANCE_SATS) {
     [
       Cl.uint(index),
       Cl.uint(1000), // target rate, bips -- not used by the pool
-      Cl.uint(STX_VALUE_RATIO),
+      Cl.uint(ratio),
       Cl.uint(MIN_USTX_RATIO),
       Cl.bufferFromHex("00"), // early-unlock script, the sBTC path ignores it
       Cl.list([
@@ -206,6 +213,9 @@ export function bootstrap(maxSats = MAX_SATS) {
 
 export const deposit = (who: string, sats: number) =>
   simnet.callPublicFn(POOL, "deposit", [Cl.uint(sats)], who).result;
+
+export const depositStx = (who: string, ustx: number) =>
+  simnet.callPublicFn(POOL, "deposit-stx", [Cl.uint(ustx)], who).result;
 
 export const withdraw = (who: string) =>
   simnet.callPublicFn(POOL, "withdraw", [], who).result;
@@ -279,6 +289,7 @@ export const requiredUstx = (sats: number) =>
 
 export const poolConfig = () => plain(readPool("get-config")) as any;
 export const boundBond = () => plain(readPool("get-bound-bond")) as any;
+export const stakePreview = () => plain(readPool("get-stake-preview")) as any;
 export const poolTotals = () => plain(readPool("get-pool")) as any;
 export const epoch = (index: number) =>
   plain(readPool("get-epoch", [Cl.uint(index)])) as any;

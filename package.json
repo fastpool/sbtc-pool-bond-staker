@@ -4,13 +4,14 @@
   "description": "Pooled sBTC + STX staker for pox-5 Bitcoin Staking Bonds.",
   "type": "module",
   "private": true,
+  "packageManager": "pnpm@11.9.0",
   "scripts": {
     "test": "vitest run",
     "test:report": "vitest run -- --coverage --costs",
-    "test:watch": "chokidar \"tests/**/*.ts\" \"contracts/**/*.clar\" -c \"npm run test:report\"",
+    "test:watch": "chokidar \"tests/**/*.ts\" \"contracts/**/*.clar\" -c \"pnpm run test:report\"",
     "fuzz:build": "node scripts/build-rendezvous.mjs",
-    "fuzz:invariant": "npm run fuzz:build && rv . bond-staker invariant",
-    "fuzz:test": "npm run fuzz:build && rv . bond-staker test"
+    "fuzz:invariant": "node scripts/build-rendezvous.mjs && rv . bond-staker invariant",
+    "fuzz:test": "node scripts/build-rendezvous.mjs && rv . bond-staker test"
   },
   "author": "",
   "license": "ISC",

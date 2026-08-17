@@ -2,7 +2,7 @@
 ;;; Rendezvous harness
 ;;;
 ;;; Everything below is appended to a verbatim copy of
-;;; contracts/bond-staker.clar by `npm run fuzz:build`. It is never part of a
+;;; contracts/bond-staker.clar by `pnpm run fuzz:build`. It is never part of a
 ;;; deployment.
 ;;;
 ;;; Why a harness is needed: a pox-5 protocol bond can only be created by the
@@ -82,6 +82,7 @@
 (define-public (harness-lock)
   (let (
       (preview (get-stake-preview))
+      (eligible (get eligible-sats preview))
       (sats (get sats preview))
       (ustx (get ustx preview))
       (custodied (var-get bonded-sats))
@@ -89,9 +90,8 @@
     )
     (asserts! (var-get bond-bound) ERR_NO_BOND_BOUND)
     (asserts! (not (var-get finished)) ERR_ALREADY_UNSTAKED)
-    (asserts! (> sats u0) ERR_NOTHING_DEPOSITED)
-    (asserts! (get within-allocation preview) ERR_ALLOCATION_EXCEEDED)
-    (asserts! (get enough-stx preview) ERR_INSUFFICIENT_STX)
+    (asserts! (> eligible u0) ERR_NOTHING_DEPOSITED)
+    (asserts! (> sats u0) ERR_INSUFFICIENT_STX)
     (asserts! (>= burn-block-height (stake-window-start)) ERR_TOO_EARLY)
     (asserts! (< burn-block-height (var-get pending-start-height)) ERR_TOO_LATE)
 
@@ -138,6 +138,7 @@
         )),
       unlock-burn-height: (var-get pending-unlock-height),
       staked-at-height: burn-block-height,
+      eligible-sats: eligible,
       total-shares: sats,
       staked-sats: sats,
       staked-ustx: ustx,
@@ -145,7 +146,9 @@
       credited: u0,
     })
     (var-set epoch-count (+ epoch u1))
-    (var-set released-sats (+ (var-get released-sats) (var-get exiting-sats)))
+    (var-set released-sats
+      (+ (var-get released-sats) (+ (var-get exiting-sats) (- eligible sats)))
+    )
     (var-set released-ustx (+ (var-get released-ustx) (var-get exiting-ustx)))
     (var-set exiting-sats u0)
     (var-set exiting-ustx u0)
@@ -320,6 +323,8 @@
     record (and
       (<= (get queued-sats record) (var-get queued-sats))
       (<= (get queued-ustx record) (var-get queued-ustx))
+      (<= (get released-sats record) (var-get released-sats))
+      (<= (get released-ustx record) (var-get released-ustx))
       (<= (get bonded-sats record)
         (+ (var-get bonded-sats) (var-get released-sats))
       )
@@ -408,6 +413,8 @@
         queued-sats: u0,
         queued-ustx: u0,
         queued-epoch: u0,
+        released-sats: u0,
+        released-ustx: u0,
         settled-epoch: u0,
         reward-index: u0,
         pending: (mod pending u100000000),
@@ -416,10 +423,15 @@
       (settled (settle record))
     )
     (asserts! (>= (get pending settled) (get pending record)) (err u903))
+    ;; principal is only ever moved between buckets, never created or lost
     (asserts!
-      (is-eq (+ (get bonded-sats settled) (get queued-sats settled))
-        (+ (get bonded-sats record) (get queued-sats record))
-      )
+      (is-eq
+        (+ (get bonded-sats settled)
+          (+ (get queued-sats settled) (get released-sats settled))
+        )
+        (+ (get bonded-sats record)
+          (+ (get queued-sats record) (get released-sats record))
+        ))
       (err u904)
     )
     (ok true)

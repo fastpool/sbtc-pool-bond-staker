@@ -16,6 +16,7 @@ import {
   CYCLE_LENGTH,
   deployer,
   deposit,
+  depositStx,
   epoch,
   initializePool,
   managerPrincipal,
@@ -42,6 +43,7 @@ import {
   setupBond,
   settledMember,
   stake,
+  stakePreview,
   stxBalance,
   STX_VALUE_RATIO,
   syncRewards,
@@ -322,7 +324,7 @@ describe("bond-staker: staking the first bond", () => {
     expect(deposit(carol, 1)).toBeErr(Cl.uint(118)); // NO_BOND_BOUND
     expect(stake()).toBeErr(Cl.uint(118));
     expect(withdraw(alice)).toBeErr(Cl.uint(110)); // nothing queued any more
-    expect(claimPrincipal(alice)).toBeErr(Cl.uint(113)); // POSITION_ACTIVE
+    expect(claimPrincipal(alice)).toBeErr(Cl.uint(114)); // nothing released
   });
 
   it("refuses to stake an empty pool", () => {
@@ -416,7 +418,7 @@ describe("bond-staker: leaving at a roll", () => {
   it("releases the member's principal and shares at the roll", () => {
     expect(requestExit(alice).type).toBe("ok");
     // nothing has moved yet -- the bond still holds it
-    expect(claimPrincipal(alice)).toBeErr(Cl.uint(113)); // POSITION_ACTIVE
+    expect(claimPrincipal(alice)).toBeErr(Cl.uint(114)); // nothing released
     expect(Number(poolTotals()["exiting-sats"])).toBe(ALICE_SATS);
 
     expect(rollInto().type).toBe("ok");
@@ -448,8 +450,10 @@ describe("bond-staker: leaving at a roll", () => {
     const sbtcBefore = sbtcBalance(alice);
     const stxBefore = stxBalance(alice);
     expect(claimablePrincipal(alice)).toEqual({
-      sats: String(ALICE_SATS),
-      ustx: String(ustx),
+      "released-sats": String(ALICE_SATS),
+      "released-ustx": String(ustx),
+      "queued-sats": "0",
+      "queued-ustx": "0",
     });
     expect(claimPrincipal(alice).type).toBe("ok");
 
@@ -800,5 +804,183 @@ describe("bond-treasury", () => {
       Number(pool()["queued-sats"]) + Number(pool()["released-sats"]),
     );
     expect(Number(pool()["released-sats"])).toBe(ALICE_SATS);
+  });
+});
+
+describe("bond-staker: a roll that does not fit", () => {
+  /**
+   * Carry members out of the epoch that just ended. A position only moves
+   * once the epoch it was in stops taking rewards, a cycle into the next one.
+   */
+  function closeOutgoingEpoch() {
+    advanceToBurnHeight(
+      readPoxNum("reward-cycle-to-burn-height", [
+        Cl.uint(Number(epoch(1)["first-reward-cycle"]) + 1),
+      ]),
+    );
+  }
+
+  /** Bond 8, priced so the pool's STX carries only half its sats. */
+  function bindDearerBond(ratio = STX_VALUE_RATIO * 2, maxSats = MAX_SATS) {
+    setupBond(NEXT_BOND_INDEX, ALLOWANCE_SATS, ratio);
+    expect(bindBond(NEXT_BOND_INDEX, maxSats).type).toBe("ok");
+  }
+
+  it("shows the shortfall before the window opens", () => {
+    stakeFirstBond();
+    bindDearerBond();
+
+    const preview = stakePreview();
+    expect(Number(preview["eligible-sats"])).toBe(POOL_SATS);
+    // twice the STX per sat, so half the sats fit
+    expect(Number(preview.sats)).toBe(POOL_SATS / 2);
+    expect(preview.scaled).toBe(true);
+    expect(preview["stx-limited"]).toBe(true);
+    expect(preview["allocation-limited"]).toBe(false);
+    // the STX the pool holds is exactly half of what carrying it all needs
+    expect(Number(preview["short-ustx"])).toBe(Number(preview.ustx));
+  });
+
+  it("rolls what fits instead of failing", () => {
+    stakeFirstBond();
+    bindDearerBond();
+    advanceToBurnHeight(bondStartHeight(NEXT_BOND_INDEX) - 288);
+    expect(stake().type).toBe("ok");
+
+    const one = epoch(1);
+    expect(Number(one["eligible-sats"])).toBe(POOL_SATS);
+    expect(Number(one["total-shares"])).toBe(POOL_SATS / 2);
+    // pox-5 gave the other half back, and it is in the treasury
+    expect(sbtcBalance(POX5)).toBe(POOL_SATS / 2);
+    expect(treasuryBalance()).toBe(POOL_SATS / 2);
+  });
+
+  it("scales every member by the same fraction", () => {
+    stakeFirstBond();
+    bindDearerBond();
+    advanceToBurnHeight(bondStartHeight(NEXT_BOND_INDEX) - 288);
+    stake();
+    closeOutgoingEpoch();
+
+    for (const [who, sats] of [
+      [alice, ALICE_SATS],
+      [bob, BOB_SATS],
+    ] as const) {
+      const record = settledMember(who);
+      expect(Number(record.shares)).toBe(sats / 2);
+      expect(Number(record["bonded-sats"])).toBe(sats / 2);
+      // the half that did not fit is theirs to take back
+      expect(Number(record["released-sats"])).toBe(sats / 2);
+      // ...while all of their STX rides on
+      expect(Number(record["bonded-ustx"])).toBe(requiredUstx(sats) / 2);
+      expect(Number(record["released-ustx"])).toBe(0);
+    }
+    // the members' shares still add up to the epoch's
+    expect(
+      Number(settledMember(alice).shares) + Number(settledMember(bob).shares),
+    ).toBe(Number(epoch(1)["total-shares"]));
+  });
+
+  it("pays the scaled-off principal out on demand", () => {
+    stakeFirstBond();
+    bindDearerBond();
+    advanceToBurnHeight(bondStartHeight(NEXT_BOND_INDEX) - 288);
+    stake();
+    closeOutgoingEpoch();
+
+    const before = sbtcBalance(alice);
+    expect(claimPrincipal(alice).type).toBe("ok");
+    expect(sbtcBalance(alice)).toBe(before + ALICE_SATS / 2);
+    // the rest is still committed to the new bond
+    expect(Number(settledMember(alice)["bonded-sats"])).toBe(ALICE_SATS / 2);
+  });
+
+  it("scales back to the allocation when that is what bites", () => {
+    stakeFirstBond();
+    // same pricing, but the bond only has room for a quarter of the pool
+    setupBond(NEXT_BOND_INDEX);
+    expect(bindBond(NEXT_BOND_INDEX, POOL_SATS / 4).type).toBe("ok");
+
+    const preview = stakePreview();
+    expect(preview["allocation-limited"]).toBe(true);
+    expect(preview["stx-limited"]).toBe(false);
+
+    advanceToBurnHeight(bondStartHeight(NEXT_BOND_INDEX) - 288);
+    expect(stake().type).toBe("ok");
+    expect(Number(epoch(1)["total-shares"])).toBe(POOL_SATS / 4);
+    closeOutgoingEpoch();
+    expect(Number(settledMember(alice).shares)).toBe(ALICE_SATS / 4);
+    // all the STX still rides, so the position is over-collateralised
+    expect(Number(epoch(1)["staked-ustx"])).toBe(
+      requiredUstx(ALICE_SATS) + requiredUstx(BOB_SATS),
+    );
+  });
+
+  it("takes an STX top-up instead, if someone closes the gap", () => {
+    stakeFirstBond();
+    bindDearerBond();
+
+    const short = Number(stakePreview()["short-ustx"]);
+    expect(short).toBeGreaterThan(0);
+    expect(depositStx(carol, short).type).toBe("ok");
+
+    const preview = stakePreview();
+    expect(preview.scaled).toBe(false);
+    expect(Number(preview.sats)).toBe(POOL_SATS);
+
+    advanceToBurnHeight(bondStartHeight(NEXT_BOND_INDEX) - 288);
+    expect(stake().type).toBe("ok");
+    // nobody was scaled back
+    expect(Number(epoch(1)["total-shares"])).toBe(POOL_SATS);
+    expect(Number(settledMember(alice).shares)).toBe(ALICE_SATS);
+    // and carol gets her STX back like any other deposit -- with no shares,
+    // since she put in no sats
+    expect(Number(settledMember(carol).shares)).toBe(0);
+    expect(Number(settledMember(carol)["bonded-ustx"])).toBe(short);
+  });
+
+  it("still stakes something when the bond is priced absurdly", () => {
+    bootstrap();
+    deposit(alice, ALICE_SATS);
+    // a bond a million times dearer in STX terms
+    setupBond(NEXT_BOND_INDEX, ALLOWANCE_SATS, STX_VALUE_RATIO * 1_000_000);
+    // the first bond came and went unstaked, so bind can replace it
+    expect(bindBond(NEXT_BOND_INDEX).type).toBe("ok");
+    advanceToBurnHeight(bondStartHeight(NEXT_BOND_INDEX) - 288);
+    expect(stake().type).toBe("ok");
+
+    // a millionth of the sats fit; the rest is alice's to take back
+    expect(Number(epoch(0)["total-shares"])).toBe(ALICE_SATS / 1_000_000);
+    expect(Number(settledMember(alice)["released-sats"])).toBe(
+      ALICE_SATS - ALICE_SATS / 1_000_000,
+    );
+  });
+});
+
+describe("bond-staker: a missed bond", () => {
+  it("can be replaced instead of stranding the pool", () => {
+    const { bondStart } = bootstrap();
+    deposit(alice, ALICE_SATS);
+
+    // the window comes and goes with nobody calling `stake`
+    advanceToBurnHeight(bondStart + 1);
+    expect(stake()).toBeErr(Cl.uint(109)); // TOO_LATE
+    expect(boundBond().stakeable).toBe(false);
+
+    // the pool is not stuck: the operator binds the next bond along
+    setupBond(NEXT_BOND_INDEX);
+    expect(bindBond(NEXT_BOND_INDEX).type).toBe("ok");
+    expect(deposit(bob, BOB_SATS).type).toBe("ok");
+
+    advanceToBurnHeight(bondStartHeight(NEXT_BOND_INDEX) - 288);
+    expect(stake().type).toBe("ok");
+    expect(Number(epoch(0)["bond-index"])).toBe(NEXT_BOND_INDEX);
+    expect(Number(epoch(0)["total-shares"])).toBe(ALICE_SATS + BOB_SATS);
+  });
+
+  it("cannot be replaced while its window is still ahead", () => {
+    bootstrap();
+    expect(boundBond().stakeable).toBe(true);
+    expect(bindBond(BOND_INDEX)).toBeErr(Cl.uint(119)); // ALREADY_BOUND
   });
 });
