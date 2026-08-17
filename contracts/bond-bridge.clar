@@ -106,7 +106,9 @@
     (txid (buff 32))
     (vout-index uint)
   )
-  (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-registry get-completed-deposit txid vout-index)
+  (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-registry
+    get-completed-deposit txid vout-index
+  )
 )
 
 ;; The STX a deposit of `sats` has to be accompanied by, for the bond the pool
@@ -324,7 +326,10 @@
 (define-public (reclaim-btc-withdrawal (request-id uint))
   (let (
       (request (unwrap! (get-withdrawal request-id) ERR_UNKNOWN_WITHDRAWAL))
-      (bridged (unwrap! (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-registry get-withdrawal-request request-id)
+      (bridged (unwrap!
+        (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-registry
+          get-withdrawal-request request-id
+        )
         ERR_UNKNOWN_WITHDRAWAL
       ))
       (accepted (unwrap! (get status bridged) ERR_WITHDRAWAL_PENDING))

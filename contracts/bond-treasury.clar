@@ -29,11 +29,9 @@
 
 ;; The pooled principal.
 (define-read-only (get-balance)
-  (unwrap-panic
-    (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
-      get-balance current-contract
-    )
-  )
+  (unwrap-panic (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
+    get-balance current-contract
+  ))
 )
 
 (define-read-only (get-controller)
@@ -53,8 +51,13 @@
   )
   (begin
     (asserts! (is-eq contract-caller CONTROLLER) ERR_UNAUTHORIZED)
-    (try! (as-contract? ((with-ft 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token "sbtc-token" amount))
-      (try! (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token transfer amount tx-sender recipient none))
+    (try! (as-contract?
+      ((with-ft 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token "sbtc-token"
+        amount
+      ))
+      (try! (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
+        transfer amount tx-sender recipient none
+      ))
     ))
     (print {
       topic: "payout",
@@ -90,9 +93,12 @@
         ;; The bridge locks the sBTC in place rather than moving it out, and
         ;; may unlock it again later; either way nothing leaves this contract
         ;; until the signers sweep it.
-        ((with-ft 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token "sbtc-token" (+ amount max-fee)))
-        (try! (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-withdrawal initiate-withdrawal-request amount
-          recipient max-fee
+        ((with-ft 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
+          "sbtc-token" (+ amount max-fee)
+        ))
+        (try! (contract-call?
+          'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-withdrawal
+          initiate-withdrawal-request amount recipient max-fee
         ))
       ))))
       (print {

@@ -492,7 +492,9 @@
 )
 
 (define-private (get-sbtc-balance)
-  (unwrap-panic (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token get-balance current-contract))
+  (unwrap-panic (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
+    get-balance current-contract
+  ))
 )
 
 ;; Rewards credited to members that the pool has not paid out yet.
@@ -550,8 +552,8 @@
 (define-read-only (is-epoch-settled (epoch uint))
   (match (map-get? epochs (+ epoch u1))
     next (>= burn-block-height
-      (contract-call? 'ST000000000000000000002AMW42H.pox-5 reward-cycle-to-burn-height
-        (+ (get first-reward-cycle next) u1)
+      (contract-call? 'ST000000000000000000002AMW42H.pox-5
+        reward-cycle-to-burn-height (+ (get first-reward-cycle next) u1)
       ))
     false
   )
@@ -702,7 +704,10 @@
   (begin
     (asserts! (is-eq tx-sender DEPLOYER) ERR_UNAUTHORIZED)
     (asserts! (not (var-get initialized)) ERR_ALREADY_INITIALIZED)
-    (asserts! (is-some (contract-call? 'ST000000000000000000002AMW42H.pox-5 get-signer-info manager))
+    (asserts!
+      (is-some (contract-call? 'ST000000000000000000002AMW42H.pox-5 get-signer-info
+        manager
+      ))
       ERR_SIGNER_NOT_REGISTERED
     )
     (var-set signer-manager manager)
@@ -728,14 +733,26 @@
     (allocation-sats uint)
   )
   (let (
-      (bond (unwrap! (contract-call? 'ST000000000000000000002AMW42H.pox-5 get-protocol-bond index) ERR_BOND_NOT_FOUND))
-      (allowance (unwrap! (contract-call? 'ST000000000000000000002AMW42H.pox-5 get-bond-allowance index current-contract)
+      (bond (unwrap!
+        (contract-call? 'ST000000000000000000002AMW42H.pox-5 get-protocol-bond
+          index
+        )
+        ERR_BOND_NOT_FOUND
+      ))
+      (allowance (unwrap!
+        (contract-call? 'ST000000000000000000002AMW42H.pox-5 get-bond-allowance
+          index current-contract
+        )
         ERR_NOT_ALLOWLISTED
       ))
-      (start-height (contract-call? 'ST000000000000000000002AMW42H.pox-5 bond-period-to-burn-height index))
-      (start-cycle (contract-call? 'ST000000000000000000002AMW42H.pox-5 bond-period-to-reward-cycle index))
-      (unlock-height (contract-call? 'ST000000000000000000002AMW42H.pox-5 reward-cycle-to-burn-height
-        (+ start-cycle BOND_LENGTH_CYCLES)
+      (start-height (contract-call? 'ST000000000000000000002AMW42H.pox-5
+        bond-period-to-burn-height index
+      ))
+      (start-cycle (contract-call? 'ST000000000000000000002AMW42H.pox-5
+        bond-period-to-reward-cycle index
+      ))
+      (unlock-height (contract-call? 'ST000000000000000000002AMW42H.pox-5
+        reward-cycle-to-burn-height (+ start-cycle BOND_LENGTH_CYCLES)
       ))
     )
     (asserts! (var-get initialized) ERR_NOT_INITIALIZED)
@@ -881,7 +898,9 @@
       (index (var-get pending-bond-index))
       (custodied (var-get bonded-sats))
       (epoch (var-get epoch-count))
-      (start-cycle (contract-call? 'ST000000000000000000002AMW42H.pox-5 bond-period-to-reward-cycle index))
+      (start-cycle (contract-call? 'ST000000000000000000002AMW42H.pox-5
+        bond-period-to-reward-cycle index
+      ))
     )
     (asserts! (var-get bond-bound) ERR_NO_BOND_BOUND)
     (asserts! (not (var-get finished)) ERR_ALREADY_UNSTAKED)
@@ -906,7 +925,8 @@
         (
           ;; Covers whichever way the difference moves: out to pox-5 when the
           ;; position grows, out to the treasury when it shrinks.
-          (with-ft 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token "sbtc-token"
+          (with-ft 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
+          "sbtc-token"
           (if (> sats custodied)
             (- sats custodied)
             (- custodied sats)
@@ -916,14 +936,14 @@
           (with-staking ustx)
           (with-pox)
         )
-        (let ((registered (try! (contract-call? 'ST000000000000000000002AMW42H.pox-5 register-for-bond index manager ustx (err sats)
-            none
+        (let ((registered (try! (contract-call? 'ST000000000000000000002AMW42H.pox-5 register-for-bond
+            index manager ustx (err sats) none
           ))))
           ;; A shrinking roll refunds the difference to the staker; send it
           ;; back to the treasury so this contract holds rewards only.
           (if (< sats custodied)
-            (try! (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token transfer (- custodied sats) tx-sender
-              .bond-treasury none
+            (try! (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
+              transfer (- custodied sats) tx-sender .bond-treasury none
             ))
             true
           )
@@ -1000,11 +1020,17 @@
         ;; back to the treasury, so that what this contract holds is rewards
         ;; and nothing else.
         (
-          (with-ft 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token "sbtc-token" sats)
+          (with-ft 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
+          "sbtc-token" sats
+        )
           (with-pox)
         )
-        (let ((unstaked (try! (contract-call? 'ST000000000000000000002AMW42H.pox-5 unstake-sbtc manager sats))))
-          (try! (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token transfer sats tx-sender .bond-treasury none))
+        (let ((unstaked (try! (contract-call? 'ST000000000000000000002AMW42H.pox-5 unstake-sbtc
+            manager sats
+          ))))
+          (try! (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
+            transfer sats tx-sender .bond-treasury none
+          ))
           unstaked
         )))))
       (print (merge { topic: "unstake-sbtc" } result))
@@ -1034,7 +1060,9 @@
     (let ((result (try! (as-contract?
         ;; Only the signer behind the position changes: no asset may move.
         ((with-pox))
-        (try! (contract-call? 'ST000000000000000000002AMW42H.pox-5 update-bond-registration manager old-manager none))
+        (try! (contract-call? 'ST000000000000000000002AMW42H.pox-5
+          update-bond-registration manager old-manager none
+        ))
       ))))
       (print (merge { topic: "update-bond-registration" } result))
       (ok result)
@@ -1180,8 +1208,13 @@
     ;; of an epoch sum to its total.
     (var-set total-paid (+ (var-get total-paid) amount))
 
-    (try! (as-contract? ((with-ft 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token "sbtc-token" amount))
-      (try! (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token transfer amount tx-sender member none))
+    (try! (as-contract?
+      ((with-ft 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token "sbtc-token"
+        amount
+      ))
+      (try! (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
+        transfer amount tx-sender member none
+      ))
     ))
 
     (print {
@@ -1411,7 +1444,9 @@
   )
   (begin
     (if (> sats u0)
-      (try! (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token transfer sats depositor .bond-treasury none))
+      (try! (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
+        transfer sats depositor .bond-treasury none
+      ))
       true
     )
     (if (> ustx u0)
