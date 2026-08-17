@@ -11,7 +11,9 @@
     "test:watch": "chokidar \"tests/**/*.ts\" \"contracts/**/*.clar\" -c \"pnpm run test:report\"",
     "fuzz:build": "node scripts/build-rendezvous.mjs",
     "fuzz:invariant": "node scripts/build-rendezvous.mjs && rv . bond-staker invariant",
-    "fuzz:test": "node scripts/build-rendezvous.mjs && rv . bond-staker test"
+    "fuzz:test": "node scripts/build-rendezvous.mjs && rv . bond-staker test",
+    "build:testnet": "node scripts/build-network.mjs testnet",
+    "ui": "python3 -m http.server -d ui 8080"
   },
   "author": "",
   "license": "ISC",

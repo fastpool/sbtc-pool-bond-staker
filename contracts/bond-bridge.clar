@@ -51,6 +51,7 @@
 (define-constant ERR_WITHDRAWAL_PENDING (err u310))
 (define-constant ERR_NOTHING_RELEASED (err u311))
 
+(define-constant SBTC_REGISTRY 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-registry)
 ;; How long an announced deposit holds its allocation before anyone may cancel
 ;; it and hand the STX leg back. A sweep takes hours; a week of slack means a
 ;; deposit in flight is never cancelled from under its owner, while a deposit
@@ -102,18 +103,18 @@
 
 ;; What the sBTC registry says about a deposit: `none` until the signers have
 ;; swept it.
-(define-read-only (get-swept-deposit
+(define-private (get-swept-deposit
     (txid (buff 32))
     (vout-index uint)
   )
-  (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-registry
+  (contract-call? SBTC_REGISTRY
     get-completed-deposit txid vout-index
   )
 )
 
 ;; The STX a deposit of `sats` has to be accompanied by, for the bond the pool
 ;; is bound to.
-(define-read-only (get-required-ustx (sats uint))
+(define-private (get-required-ustx (sats uint))
   (contract-call? .bond-staker get-required-ustx sats)
 )
 
@@ -336,7 +337,7 @@
   (let (
       (request (unwrap! (get-withdrawal request-id) ERR_UNKNOWN_WITHDRAWAL))
       (bridged (unwrap!
-        (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-registry
+        (contract-call? SBTC_REGISTRY
           get-withdrawal-request request-id
         )
         ERR_UNKNOWN_WITHDRAWAL

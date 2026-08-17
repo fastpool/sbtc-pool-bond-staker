@@ -208,7 +208,8 @@
 
 ;; Only this principal may `initialize` the contract.
 (define-constant DEPLOYER tx-sender)
-
+(define-constant POX_5 'SP000000000000000000002Q6VF78.pox-5)
+(define-constant SBTC 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token)
 ;;; Configuration
 
 (define-data-var initialized bool false)
@@ -495,13 +496,13 @@
 )
 
 ;; The pooled principal pox-5 does not have custody of.
-(define-read-only (get-treasury-balance)
+(define-private (get-treasury-balance)
   (contract-call? .bond-treasury get-balance)
 )
 
-(define-read-only (get-sbtc-balance)
+(define-private (get-sbtc-balance)
   (unwrap-panic
-    (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
+    (contract-call? SBTC
       get-balance current-contract
     ))
 )
@@ -514,7 +515,7 @@
 ;; sBTC this contract holds beyond the rewards it has already recognised --
 ;; the pot `sync-rewards` distributes. Every satoshi here is reward: the
 ;; principal is the treasury's.
-(define-read-only (get-unrecognized-rewards)
+(define-private (get-unrecognized-rewards)
   (let (
       (balance (get-sbtc-balance))
       (recognized (get-unclaimed-rewards))
@@ -558,10 +559,10 @@
 ;; replaced it -- an epoch therefore keeps taking rewards until the epoch after
 ;; it has a full reward cycle behind it. The latest epoch never settles, so a
 ;; late payment is never stranded.
-(define-read-only (is-epoch-settled (epoch uint))
+(define-private (is-epoch-settled (epoch uint))
   (match (map-get? epochs (+ epoch u1))
     next (>= burn-block-height
-      (contract-call? 'ST000000000000000000002AMW42H.pox-5
+      (contract-call? POX_5
         reward-cycle-to-burn-height (+ (get first-reward-cycle next) u1)
       ))
     false
@@ -571,7 +572,7 @@
 ;; The epoch `sync-rewards` credits: the oldest one still taking rewards. At
 ;; most two are, since an epoch settles one cycle into the next and a bond runs
 ;; for twelve.
-(define-read-only (get-reward-epoch)
+(define-private (get-reward-epoch)
   (let ((count (var-get epoch-count)))
     (if (is-eq count u0)
       none
@@ -592,9 +593,9 @@
 ;; sBTC in the treasury that the books do not account for: an unspent
 ;; withdrawal fee handed back by the bridge, a bridge deposit nobody announced,
 ;; or a plain mistaken transfer. Cannot include a satoshi of member principal.
-(define-read-only (get-unattributed-principal)
+(define-private (get-unattributed-principal)
   (let (
-      (balance (get-treasury-balance))
+      (balance (unwrap-panic (get-treasury-balance)))
       (accounted (+ (var-get queued-sats)
         (+ (var-get released-sats) (var-get withdrawing-sats))
       ))
@@ -667,14 +668,14 @@
 ;; The member's record brought up to date: closed epochs settled, a queued
 ;; deposit committed, an exit or a scale-back realised. This is what every
 ;; member-facing function works from.
-(define-read-only (get-settled-member (member principal))
+(define-private (get-settled-member (member principal))
   (match (map-get? members member)
     record (some (settle record))
     none
   )
 )
 
-(define-read-only (get-claimable-rewards (member principal))
+(define-private (get-claimable-rewards (member principal))
   (match (map-get? members member)
     record (get pending (settle record))
     u0
@@ -683,7 +684,7 @@
 
 ;; Principal the member can take right now: whatever has been released, plus
 ;; their queued deposit, which `withdraw` returns at any time.
-(define-read-only (get-claimable-principal (member principal))
+(define-private (get-claimable-principal (member principal))
   (match (map-get? members member)
     stored (let ((record (settle stored)))
       {
@@ -715,7 +716,7 @@
     (asserts! (not (var-get initialized)) ERR_ALREADY_INITIALIZED)
     (asserts!
       (is-some
-        (contract-call? 'ST000000000000000000002AMW42H.pox-5 get-signer-info
+        (contract-call? POX_5 get-signer-info
           manager
         ))
       ERR_SIGNER_NOT_REGISTERED
@@ -744,24 +745,24 @@
   )
   (let (
       (bond (unwrap!
-        (contract-call? 'ST000000000000000000002AMW42H.pox-5 get-protocol-bond
+        (contract-call? POX_5 get-protocol-bond
           index
         )
         ERR_BOND_NOT_FOUND
       ))
       (allowance (unwrap!
-        (contract-call? 'ST000000000000000000002AMW42H.pox-5 get-bond-allowance
+        (contract-call? POX_5 get-bond-allowance
           index current-contract
         )
         ERR_NOT_ALLOWLISTED
       ))
-      (start-height (contract-call? 'ST000000000000000000002AMW42H.pox-5
+      (start-height (contract-call? POX_5
         bond-period-to-burn-height index
       ))
-      (start-cycle (contract-call? 'ST000000000000000000002AMW42H.pox-5
+      (start-cycle (contract-call? POX_5
         bond-period-to-reward-cycle index
       ))
-      (unlock-height (contract-call? 'ST000000000000000000002AMW42H.pox-5
+      (unlock-height (contract-call? POX_5
         reward-cycle-to-burn-height (+ start-cycle BOND_LENGTH_CYCLES)
       ))
     )
@@ -908,7 +909,7 @@
       (index (var-get pending-bond-index))
       (custodied (var-get bonded-sats))
       (epoch (var-get epoch-count))
-      (start-cycle (contract-call? 'ST000000000000000000002AMW42H.pox-5
+      (start-cycle (contract-call? POX_5
         bond-period-to-reward-cycle index
       ))
     )
@@ -937,7 +938,7 @@
         (
           ;; Covers whichever way the difference moves: out to pox-5 when the
           ;; position grows, out to the treasury when it shrinks.
-          (with-ft 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
+          (with-ft SBTC
             "sbtc-token" (if (> sats custodied)
               (- sats custodied)
               (- custodied sats)
@@ -948,7 +949,7 @@
           (with-pox)
         )
         (let ((registered (try!
-            (contract-call? 'ST000000000000000000002AMW42H.pox-5
+            (contract-call? POX_5
               register-for-bond index manager ustx (err sats) none
             ))))
           ;; A shrinking roll refunds the difference to the staker; send it
@@ -956,7 +957,7 @@
           (if (< sats custodied)
             (try!
               (contract-call?
-                'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token transfer
+                SBTC transfer
                 (- custodied sats) tx-sender .bond-treasury none
               ))
             true
@@ -1036,17 +1037,17 @@
         ;; back to the treasury, so that what this contract holds is rewards
         ;; and nothing else.
         (
-          (with-ft 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
+          (with-ft SBTC
             "sbtc-token" sats
           )
           (with-pox)
         )
         (let ((unstaked (try!
-            (contract-call? 'ST000000000000000000002AMW42H.pox-5 unstake-sbtc
+            (contract-call? POX_5 unstake-sbtc
               manager sats
             ))))
           (try!
-            (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
+            (contract-call? SBTC
               transfer sats tx-sender .bond-treasury none
             ))
           unstaked
@@ -1080,7 +1081,7 @@
         ;; Only the signer behind the position changes: no asset may move.
         ((with-pox))
         (try!
-          (contract-call? 'ST000000000000000000002AMW42H.pox-5
+          (contract-call? POX_5
             update-bond-registration manager old-manager none
           ))
       ))))
@@ -1229,11 +1230,11 @@
     (var-set total-paid (+ (var-get total-paid) amount))
 
     (try! (as-contract?
-      ((with-ft 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
+      ((with-ft SBTC
         "sbtc-token" amount
       ))
       (try!
-        (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
+        (contract-call? SBTC
           transfer amount tx-sender member none
         ))
     ))
@@ -1467,7 +1468,7 @@
   (begin
     (if (> sats u0)
       (try!
-        (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
+        (contract-call? SBTC
           transfer sats depositor .bond-treasury none
         ))
       true
@@ -1561,7 +1562,7 @@
 ;; they lived through, commit a queued deposit the moment its epoch opened,
 ;; release them once an exit or a wind-down has taken effect, and finally
 ;; accrue whatever the epoch they now sit in has paid so far.
-(define-read-only (settle (record {
+(define-private (settle (record {
   shares: uint,
   bonded-sats: uint,
   bonded-ustx: uint,

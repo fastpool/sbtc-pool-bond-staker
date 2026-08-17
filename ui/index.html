@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Bitcoin Staking Bond pool</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #fbfaf8;
+        --card: #fff;
+        --line: #e4e0da;
+        --ink: #1c1a17;
+        --dim: #6d675e;
+        --accent: #d1620a;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #16150f;
+          --card: #201e18;
+          --line: #35322a;
+          --ink: #f2eee6;
+          --dim: #a49c8f;
+          --accent: #f08a3c;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 2rem 1rem 4rem;
+        background: var(--bg);
+        color: var(--ink);
+        font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, sans-serif;
+      }
+      main { max-width: 46rem; margin: 0 auto; display: grid; gap: 1rem; }
+      h1 { font-size: 1.3rem; margin: 0; }
+      h2 { font-size: 1rem; margin: 0 0 .75rem; }
+      p.lead { color: var(--dim); margin: .25rem 0 1rem; }
+      section {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: .6rem;
+        padding: 1rem;
+      }
+      dl { display: grid; grid-template-columns: 10rem 1fr; gap: .3rem .75rem; margin: 0; }
+      dt { color: var(--dim); }
+      dd { margin: 0; }
+      label { display: block; color: var(--dim); font-size: .85rem; margin: .6rem 0 .2rem; }
+      input, select {
+        width: 100%;
+        padding: .45rem .55rem;
+        border: 1px solid var(--line);
+        border-radius: .35rem;
+        background: var(--bg);
+        color: inherit;
+        font: inherit;
+      }
+      button {
+        padding: .45rem .9rem;
+        border: 1px solid var(--line);
+        border-radius: .35rem;
+        background: var(--accent);
+        color: #fff;
+        font: inherit;
+        cursor: pointer;
+      }
+      button.ghost { background: transparent; color: inherit; }
+      button:disabled { opacity: .45; cursor: not-allowed; }
+      .row { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
+      .row > * { flex: 0 0 auto; }
+      .grow { flex: 1 1 12rem; }
+      .tabs { display: flex; gap: .4rem; margin-bottom: .75rem; }
+      .tabs button.on { background: var(--accent); color: #fff; }
+      .quote { color: var(--dim); font-size: .85rem; min-height: 1.2em; }
+      .status { min-height: 1.4em; font-size: .9rem; color: var(--dim); }
+      .status.ok { color: #2b7a3d; }
+      .status.warn { color: #b3402a; }
+      .step { border-left: 2px solid var(--line); padding-left: .8rem; margin: .9rem 0; }
+      code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85em; }
+      a { color: var(--accent); }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Bitcoin Staking Bond pool</h1>
+        <p class="lead">
+          Deposit sBTC — or bitcoin straight from L1 — alongside the STX the
+          bond requires, and the pool stakes it into a pox-5 protocol bond.
+        </p>
+      </header>
+
+      <section>
+        <div class="row">
+          <div class="grow">
+            <label for="network">Network</label>
+            <select id="network">
+              <option value="testnet">testnet</option>
+              <option value="mainnet">mainnet</option>
+              <option value="devnet">devnet</option>
+            </select>
+          </div>
+          <div class="grow">
+            <label for="deployer">Pool deployer address</label>
+            <input id="deployer" placeholder="ST… (deployer of bond-staker)" />
+          </div>
+          <div class="grow">
+            <label for="manager">Signer manager</label>
+            <input id="manager" placeholder="ST….fastpool-signer-manager" />
+          </div>
+        </div>
+        <div class="row" style="margin-top: .8rem">
+          <button id="connect">Connect wallet</button>
+          <button id="refresh" class="ghost">Refresh</button>
+          <span class="quote" id="account">not connected</span>
+        </div>
+        <div class="status" id="status"></div>
+      </section>
+
+      <section>
+        <h2>The pool</h2>
+        <div id="pool"></div>
+        <div class="row" style="margin-top: .8rem">
+          <button id="stake">Stake the pool</button>
+          <span class="quote">permissionless, inside the window</span>
+        </div>
+      </section>
+
+      <section>
+        <h2>Join</h2>
+        <div class="tabs">
+          <button data-tab="sbtc" class="on ghost">With sBTC</button>
+          <button data-tab="btc" class="ghost">With L1 bitcoin</button>
+        </div>
+
+        <div data-panel="sbtc">
+          <label for="sbtc-sats">Amount (sats)</label>
+          <input id="sbtc-sats" inputmode="numeric" placeholder="10000000" />
+          <p class="quote" id="sbtc-quote"></p>
+          <div class="row">
+            <button id="deposit">Deposit</button>
+            <button id="withdraw" class="ghost">Withdraw queued</button>
+          </div>
+        </div>
+
+        <div data-panel="btc" hidden>
+          <p class="quote">
+            Announce the deposit <em>before</em> you broadcast it — until the
+            transaction is out, only you know its txid.
+          </p>
+          <label for="btc-sats">Amount (sats)</label>
+          <input id="btc-sats" inputmode="numeric" placeholder="10000000" />
+          <p class="quote" id="btc-quote"></p>
+
+          <div class="step">
+            <strong>1. Announce</strong>
+            <label for="btc-txid">Txid of the bitcoin transaction you are about to send</label>
+            <input id="btc-txid" placeholder="64 hex characters" />
+            <label for="btc-vout">Output index</label>
+            <input id="btc-vout" inputmode="numeric" value="0" />
+            <div class="row" style="margin-top: .6rem">
+              <button id="announce">Announce</button>
+              <button id="cancel-announce" class="ghost">Cancel</button>
+            </div>
+          </div>
+
+          <div class="step">
+            <strong>2. Send the bitcoin</strong>
+            <p class="quote">
+              To the pool's treasury: <code id="deposit-address">—</code>
+              <br />Never to the staker contract: sBTC arriving there is taken
+              for reward.
+            </p>
+          </div>
+
+          <div class="step">
+            <strong>3. Confirm</strong>
+            <p class="quote">
+              Once the sBTC signers have swept it. Anyone can do this for you.
+            </p>
+            <button id="confirm">Confirm deposit</button>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>My position</h2>
+        <div id="position"><p class="quote">Connect a wallet to see it.</p></div>
+        <div class="row" style="margin-top: .8rem">
+          <button id="claim-rewards" class="ghost">Claim rewards</button>
+          <button id="claim-principal" class="ghost">Claim principal</button>
+          <button id="request-exit" class="ghost">Leave at next roll</button>
+          <button id="cancel-exit" class="ghost">Stay after all</button>
+        </div>
+        <div class="step">
+          <strong>Take the principal out as bitcoin</strong>
+          <label for="btc-payout">Bitcoin address</label>
+          <input id="btc-payout" placeholder="bc1… / tb1… / 1… / 3…" />
+          <label for="max-fee">Max fee (sats, taken out of the amount)</label>
+          <input id="max-fee" inputmode="numeric" value="10000" />
+          <div class="row" style="margin-top: .6rem">
+            <button id="claim-to-btc">Claim to bitcoin</button>
+          </div>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

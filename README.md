@@ -165,6 +165,28 @@ The one precondition the contract cannot arrange for itself is the allowlist:
 the bond admin must have called `setup-bond` naming this contract, for the
 first bond and for every roll.
 
+## UI
+
+    pnpm run ui        # http://localhost:8080
+
+A buildless page for the whole flow — deposit with sBTC or with L1 bitcoin,
+watch the pool, claim, leave. See [ui/README.md](ui/README.md).
+
+## Networks
+
+The sBTC protocol sits at the same hash on every network but a different
+version byte, and a Clarity `contract-call?` target is a literal, so the
+contracts are network-specific text:
+
+    testnet   SN3VMHXEN64ZZF71JQ5VESXDWTR301XTTXGF4J8F1
+    mainnet   SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4
+
+`contracts/` holds the mainnet form, which is what the tests run against, since
+simnet mirrors mainnet's sBTC deployment. `pnpm run build:testnet` writes the
+testnet flavour to `build/testnet/`. Nothing else changes: cycle lengths, bond
+start heights and the bond's pricing are all read from pox-5 at run time, and
+testnet's differ from simnet's (900-block cycles rather than 1050).
+
 ## Tests
 
     pnpm test                # unit tests, driving the real pox-5 in simnet
