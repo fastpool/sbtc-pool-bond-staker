@@ -71,13 +71,29 @@
 ;;
 ;; Which epoch a reward belongs to
 ;;
-;; Rewards arrive as a bare sBTC transfer, so the pool dates them by the clock
-;; rather than by their contents. pox-5 settles a reward cycle only once that
-;; cycle has ended, so a bond's final cycle pays out *after* the roll that
-;; replaced it. An epoch therefore stays open for rewards until the epoch
-;; after it has a full reward cycle behind it, and `sync-rewards` always
-;; credits the oldest open epoch. At most two epochs are open at once, and the
-;; latest epoch never closes, so a late payment is never stranded.
+;; Rewards arrive as a bare sBTC transfer, carrying no record of the cycle they
+;; are for, so the pool dates them by the clock. pox-5 settles a reward cycle
+;; only once that cycle has ended, so a bond's final cycle pays out *after* the
+;; roll that replaced it: an epoch keeps taking rewards until the epoch after it
+;; has a full reward cycle behind it, and `sync-rewards` credits the oldest
+;; epoch still paying. At most two are, and the latest never settles, so a late
+;; payment is never stranded.
+;;
+;; Two clocks, then, and they are deliberately not the same one:
+;;
+;;   positions move when the pool rolls -- so a member's record never
+;;   describes a position the pool has already moved on from, which is what
+;;   keeps every counter here in step with every member's record
+;;
+;;   rewards move when an epoch settles -- so the bond a member was actually
+;;   in is the one that pays them, including the member who left at the roll
+;;
+;; The gap between the two is bridged by a *stash*: when the roll carries a
+;; member out of an epoch that is still paying, their claim on it -- the shares
+;; they held and the point they had drawn it down to -- is set aside, and
+;; `accrue-stash` keeps drawing it until that epoch settles. Only ever one
+;; stash: an epoch settles a cycle into the next one, and the roll after that
+;; is a bond term further on.
 ;;
 ;; The STX/sBTC split
 ;;
@@ -265,6 +281,30 @@
 (define-data-var released-sats uint u0)
 (define-data-var released-ustx uint u0)
 
+;;; Coming in and going out over the sBTC bridge
+;;
+;; A member who holds L1 BTC never has to touch sBTC. They announce the deposit
+;; they are about to broadcast -- paying its STX leg in the same call, which is
+;; the one Stacks transaction they were always going to need -- and address the
+;; bitcoin to the treasury. Once the sBTC signers have swept it,
+;; `confirm-btc-deposit` reads the sBTC registry, matches the transaction to
+;; the announcement, and queues the sats.
+;;
+;; Announcing before broadcasting is what makes this safe. A deposit addressed
+;; to the treasury carries no record of who sent it, so the only thing tying it
+;; to a member is the announcement -- and until the transaction is broadcast,
+;; nobody else can know its txid to announce it first.
+
+;; Sats announced but not yet swept. They hold allocation room, and their STX
+;; leg is already paid, but no sBTC has arrived for them yet.
+(define-data-var announced-sats uint u0)
+
+;; Principal locked in the bridge for withdrawal requests that have not been
+;; settled yet. Still part of the treasury's balance until the signers sweep.
+(define-data-var withdrawing-sats uint u0)
+
+
+
 ;;; Pooled rewards
 ;;
 ;; Credit is derived from an epoch's reward index in one step -- never
@@ -298,6 +338,12 @@
     settled-epoch: uint,
     reward-index: uint,
     pending: uint,
+    ;; A claim kept on an epoch the roll has carried them out of, while that
+    ;; epoch is still paying: the shares they held in it and how far they have
+    ;; drawn the claim down.
+    tail-epoch: (optional uint),
+    tail-shares: uint,
+    tail-index: uint,
     ;; The epoch during which they asked to leave; the roll out of that epoch
     ;; releases them.
     exit-epoch: (optional uint),
@@ -340,6 +386,8 @@
     exiting-ustx: (var-get exiting-ustx),
     released-sats: (var-get released-sats),
     released-ustx: (var-get released-ustx),
+    announced-sats: (var-get announced-sats),
+    withdrawing-sats: (var-get withdrawing-sats),
     total-credited: (var-get total-credited),
     total-paid: (var-get total-paid),
     unclaimed-rewards: (get-unclaimed-rewards),
@@ -497,11 +545,20 @@
   )
 )
 
-;; An epoch stops taking rewards once the epoch after it has a full reward
-;; cycle behind it -- by then pox-5 has settled the last cycle of this
-;; epoch's bond. The latest epoch never closes, so a late payment always has
-;; somewhere to land.
-(define-read-only (is-epoch-closed (epoch uint))
+;; An epoch is over the moment the pool rolls out of it. *Positions* move then
+;; and only then: members are carried into the new epoch in the same breath as
+;; the pool is, so a member's record never describes a position the pool has
+;; already moved on from.
+(define-read-only (is-epoch-ended (epoch uint))
+  (is-some (map-get? epochs (+ epoch u1)))
+)
+
+;; Rewards run on a slower clock. pox-5 settles a reward cycle only once that
+;; cycle has ended, so a bond's final cycle pays out *after* the roll that
+;; replaced it -- an epoch therefore keeps taking rewards until the epoch after
+;; it has a full reward cycle behind it. The latest epoch never settles, so a
+;; late payment is never stranded.
+(define-read-only (is-epoch-settled (epoch uint))
   (match (map-get? epochs (+ epoch u1))
     next (>= burn-block-height
       (contract-call? 'ST000000000000000000002AMW42H.pox-5
@@ -511,15 +568,40 @@
   )
 )
 
-;; The epoch `sync-rewards` credits: the oldest one still open.
+;; The epoch `sync-rewards` credits: the oldest one still taking rewards. At
+;; most two are, since an epoch settles one cycle into the next and a bond runs
+;; for twelve.
 (define-read-only (get-reward-epoch)
   (let ((count (var-get epoch-count)))
     (if (is-eq count u0)
       none
-      (if (and (> count u1) (not (is-epoch-closed (- count u2))))
+      (if (and (> count u1) (not (is-epoch-settled (- count u2))))
         (some (- count u2))
         (some (- count u1))
       )
+    )
+  )
+)
+
+;; Everything holding a place in the next bond: what the roll would commit,
+;; plus deposits announced over the bridge whose sats have not landed yet.
+(define-read-only (get-committing-sats)
+  (+ (get eligible-sats (get-stake-preview)) (var-get announced-sats))
+)
+
+;; sBTC in the treasury that the books do not account for: an unspent
+;; withdrawal fee handed back by the bridge, a bridge deposit nobody announced,
+;; or a plain mistaken transfer. Cannot include a satoshi of member principal.
+(define-read-only (get-unattributed-principal)
+  (let (
+      (balance (get-treasury-balance))
+      (accounted (+ (var-get queued-sats)
+        (+ (var-get released-sats) (var-get withdrawing-sats))
+      ))
+    )
+    (if (> balance accounted)
+      (- balance accounted)
+      u0
     )
   )
 )
@@ -549,6 +631,34 @@
       (/ (* amount (get total-shares record)) (get eligible-sats record))
     )
     amount
+  )
+)
+
+;; The part of `amount` that epoch `epoch` had no room for, and so hands back.
+;;
+;; Deliberately floored in its own right rather than taken as the remainder of
+;; `scale-into-epoch`. Both sides have to round *down* for the pool to stay
+;; solvent on both: the carried parts must sum to no more than the epoch's
+;; shares, and the handed-back parts to no more than the pool released. Deriving
+;; one from the other rounds it up, and a scaled roll then owes its members a
+;; satoshi more principal than it credited -- which is exactly what the
+;; rendezvous run caught. What the two floors leave behind, at most one satoshi
+;; per member per scaled roll, is unattributed principal.
+(define-read-only (scale-released-from-epoch
+    (amount uint)
+    (epoch uint)
+  )
+  (match (map-get? epochs epoch)
+    record (if (or
+        (is-eq (get eligible-sats record) u0)
+        (>= (get total-shares record) (get eligible-sats record))
+      )
+      u0
+      (/ (* amount (- (get eligible-sats record) (get total-shares record)))
+        (get eligible-sats record)
+      )
+    )
+    u0
   )
 )
 
@@ -700,12 +810,7 @@
     (asserts! (var-get bond-bound) ERR_NO_BOND_BOUND)
     (asserts! (< burn-block-height (var-get pending-start-height)) ERR_TOO_LATE)
     (asserts! (> sats u0) ERR_INVALID_AMOUNT)
-    ;; Room is measured against what the next stake would commit, so a member
-    ;; on the way out frees up space for someone else in the same bond.
-    (asserts!
-      (<= (+ (get eligible-sats (get-stake-preview)) sats)
-        (var-get pending-max-sats)
-      )
+    (asserts! (<= (+ (get-committing-sats) sats) (var-get pending-max-sats))
       ERR_ALLOCATION_EXCEEDED
     )
     (try! (queue-for-next-bond record depositor sats ustx))
@@ -1184,6 +1289,130 @@
   )
 )
 
+;;; The ledger side of the L1 bridge
+;;
+;; `bond-bridge` owns the bridge protocol -- announcements, the sBTC registry
+;; lookups, withdrawal requests -- and calls in here to move the ledger. It is
+;; the only caller these five accept, and none of them can be reached any other
+;; way.
+
+(define-private (authorize-bridge)
+  (ok (asserts! (is-eq contract-caller .bond-bridge) ERR_UNAUTHORIZED))
+)
+
+;; Hold allocation room for a deposit that is on its way over the bridge, and
+;; report the STX leg it has to come with.
+(define-public (reserve-bridged-deposit
+    (member principal)
+    (sats uint)
+  )
+  (begin
+    (try! (authorize-bridge))
+    (asserts! (var-get bond-bound) ERR_NO_BOND_BOUND)
+    (asserts! (< burn-block-height (var-get pending-start-height)) ERR_TOO_LATE)
+    (asserts! (> sats u0) ERR_INVALID_AMOUNT)
+    (asserts! (<= (+ (get-committing-sats) sats) (var-get pending-max-sats))
+      ERR_ALLOCATION_EXCEEDED
+    )
+    (asserts!
+      (is-none (get exit-epoch (settle (get-or-create-member member))))
+      ERR_ALREADY_EXITING
+    )
+    (var-set announced-sats (+ (var-get announced-sats) sats))
+    (ok (get-required-ustx sats))
+  )
+)
+
+;; Give the room back: the deposit was called off.
+(define-public (abandon-bridged-deposit (sats uint))
+  (begin
+    (try! (authorize-bridge))
+    (var-set announced-sats (- (var-get announced-sats) sats))
+    (ok true)
+  )
+)
+
+;; Queue a deposit that has arrived over the bridge. The sats are already in
+;; the treasury and the bridge has just handed the STX leg over, so this only
+;; has to be written down.
+(define-public (credit-bridged-deposit
+    (member principal)
+    (sats uint)
+    (ustx uint)
+  )
+  (begin
+    (try! (authorize-bridge))
+    (var-set announced-sats (- (var-get announced-sats) sats))
+    (try! (credit-queue (settle (get-or-create-member member)) member sats ustx))
+    (ok true)
+  )
+)
+
+;; Take a member's released sats out of the pool's hands and into the bridge's,
+;; ready to be sent to bitcoin. Returns what was locked, so the bridge knows
+;; the amount to request.
+(define-public (debit-released-for-bridge
+    (member principal)
+    (max-fee uint)
+  )
+  (begin
+    (try! (authorize-bridge))
+    (let (
+        (record (settle (unwrap! (map-get? members member) ERR_NOTHING_DEPOSITED)))
+        (locked (get released-sats record))
+      )
+      ;; A fee bigger than the position is not a withdrawal.
+      (asserts! (> locked max-fee) ERR_INVALID_AMOUNT)
+
+      (map-set members member (merge record { released-sats: u0 }))
+      (var-set released-sats (- (var-get released-sats) locked))
+      (var-set withdrawing-sats (+ (var-get withdrawing-sats) locked))
+      (ok locked)
+    )
+  )
+)
+
+;; Close the books on a bitcoin withdrawal. Rejected, and the sBTC is back in
+;; the treasury for the member to claim; accepted, and it has left for good.
+(define-public (settle-bridge-withdrawal
+    (member principal)
+    (sats uint)
+    (accepted bool)
+  )
+  (begin
+    (try! (authorize-bridge))
+    (var-set withdrawing-sats (- (var-get withdrawing-sats) sats))
+    (if accepted
+      true
+      (let ((record (settle (get-or-create-member member))))
+        (map-set members member
+          (merge record { released-sats: (+ (get released-sats record) sats) })
+        )
+        (var-set released-sats (+ (var-get released-sats) sats))
+      )
+    )
+    (ok true)
+  )
+)
+
+;; Move sBTC the treasury holds that the books do not account for. That is the
+;; unspent part of a withdrawal fee, a bridge deposit nobody announced, or a
+;; mistaken transfer -- never member principal, since the amount is measured as
+;; the balance *above* everything owed.
+(define-public (sweep-unattributed-principal (recipient principal))
+  (let ((amount (get-unattributed-principal)))
+    (asserts! (is-eq tx-sender (var-get operator)) ERR_UNAUTHORIZED)
+    (asserts! (> amount u0) ERR_NOTHING_TO_CLAIM)
+    (try! (contract-call? .bond-treasury payout amount recipient))
+    (print {
+      topic: "sweep-unattributed-principal",
+      amount: amount,
+      recipient: recipient,
+    })
+    (ok amount)
+  )
+)
+
 ;;; Private helpers
 
 (define-private (get-or-create-member (member principal))
@@ -1201,6 +1430,9 @@
     settled-epoch: (var-get epoch-count),
     reward-index: u0,
     pending: u0,
+    tail-epoch: none,
+    tail-shares: u0,
+    tail-index: u0,
     exit-epoch: none,
   }
     (map-get? members member)
@@ -1223,9 +1455,54 @@
       settled-epoch: uint,
       reward-index: uint,
       pending: uint,
+      tail-epoch: (optional uint),
+      tail-shares: uint,
+      tail-index: uint,
       exit-epoch: (optional uint),
     })
     (depositor principal)
+    (sats uint)
+    (ustx uint)
+  )
+  (begin
+    (if (> sats u0)
+      (try!
+        (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
+          transfer sats depositor .bond-treasury none
+        ))
+      true
+    )
+    (if (> ustx u0)
+      (try! (stx-transfer? ustx depositor current-contract))
+      true
+    )
+
+    (credit-queue record depositor sats ustx)
+  )
+)
+
+;; Write a deposit into the queue. Split out from the transfers because a
+;; deposit that came over the bridge is already paid for by the time it is
+;; confirmed -- the sats are in the treasury and the STX is here.
+(define-private (credit-queue
+    (record {
+      shares: uint,
+      bonded-sats: uint,
+      bonded-ustx: uint,
+      queued-sats: uint,
+      queued-ustx: uint,
+      queued-epoch: uint,
+      released-sats: uint,
+      released-ustx: uint,
+      settled-epoch: uint,
+      reward-index: uint,
+      pending: uint,
+      tail-epoch: (optional uint),
+      tail-shares: uint,
+      tail-index: uint,
+      exit-epoch: (optional uint),
+    })
+    (member principal)
     (sats uint)
     (ustx uint)
   )
@@ -1243,20 +1520,7 @@
       )
       ERR_QUEUE_PENDING
     )
-
-    (if (> sats u0)
-      (try!
-        (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
-          transfer sats depositor .bond-treasury none
-        ))
-      true
-    )
-    (if (> ustx u0)
-      (try! (stx-transfer? ustx depositor current-contract))
-      true
-    )
-
-    (map-set members depositor
+    (map-set members member
       (merge record {
         queued-sats: (+ (get queued-sats record) sats),
         queued-ustx: (+ (get queued-ustx record) ustx),
@@ -1269,6 +1533,8 @@
   )
 )
 
+;; The treasury's principal, for comparing against a bridge deposit's named
+;; recipient.
 ;; Pay principal out: the sBTC from the treasury, the STX from here.
 (define-private (pay-principal
     (recipient principal)
@@ -1307,15 +1573,20 @@
   settled-epoch: uint,
   reward-index: uint,
   pending: uint,
+  tail-epoch: (optional uint),
+  tail-shares: uint,
+  tail-index: uint,
   exit-epoch: (optional uint),
 }))
   (release-if-finished
-    (release-if-exited
-      (accrue-current (get record (fold advance-epoch CATCHUP_STEPS {
-        record: (commit-queue record),
-        done: false,
-      })))
-    )
+    ;; `accrue-stash` runs on both sides of the fold: before, so a stash that
+    ;; is about to be replaced is banked first, and after, so one the fold has
+    ;; just created is drawn down in the same breath. Running it twice is
+    ;; harmless -- the second pass finds nothing new to credit.
+    (accrue-current (accrue-stash (get record (fold advance-epoch CATCHUP_STEPS {
+      record: (commit-queue (accrue-stash record)),
+      done: false,
+    }))))
   )
 )
 
@@ -1336,6 +1607,9 @@
   settled-epoch: uint,
   reward-index: uint,
   pending: uint,
+  tail-epoch: (optional uint),
+  tail-shares: uint,
+  tail-index: uint,
   exit-epoch: (optional uint),
 }))
   (if (and
@@ -1343,16 +1617,19 @@
       (<= (get queued-epoch record) (get settled-epoch record))
       (< (get queued-epoch record) (var-get epoch-count))
     )
-    (let ((committed (scale-into-epoch (get queued-sats record)
-        (get queued-epoch record)
-      )))
+    (let (
+        (committed (scale-into-epoch (get queued-sats record)
+          (get queued-epoch record)
+        ))
+        (handed-back (scale-released-from-epoch (get queued-sats record)
+          (get queued-epoch record)
+        ))
+      )
       (merge record {
         shares: (+ (get shares record) committed),
         bonded-sats: (+ (get bonded-sats record) committed),
         bonded-ustx: (+ (get bonded-ustx record) (get queued-ustx record)),
-        released-sats: (+ (get released-sats record)
-          (- (get queued-sats record) committed)
-        ),
+        released-sats: (+ (get released-sats record) handed-back),
         queued-sats: u0,
         queued-ustx: u0,
       })
@@ -1379,6 +1656,9 @@
         settled-epoch: uint,
         reward-index: uint,
         pending: uint,
+        tail-epoch: (optional uint),
+        tail-shares: uint,
+        tail-index: uint,
         exit-epoch: (optional uint),
       },
       done: bool,
@@ -1388,12 +1668,15 @@
       (record (get record state))
       (epoch (get settled-epoch record))
     )
-    (if (or (get done state) (not (is-epoch-closed epoch)))
+    (if (or (get done state) (not (is-epoch-ended epoch)))
       (merge state { done: true })
       (let (
-          (final-index (default-to u0
-            (get reward-index (map-get? epochs epoch))
-          ))
+          (index (default-to u0 (get reward-index (map-get? epochs epoch))))
+          ;; The epoch being left may still be paying: pox-5 settles its final
+          ;; cycle after the pool has rolled on. If so, the member's claim on
+          ;; it is stashed rather than closed out, and `accrue-stash` keeps
+          ;; drawing it down until the epoch settles.
+          (defer (not (is-epoch-settled epoch)))
           (next (+ epoch u1))
           ;; An exit asked for during `epoch` takes effect as the pool rolls
           ;; out of it.
@@ -1413,14 +1696,39 @@
             u0
             (+ (get bonded-sats record) joining-sats)
           ))
-          ;; ...and the part of it the bond had room for.
+          ;; ...the part of it the bond had room for...
           (carried (scale-into-epoch offered next))
+          ;; ...and the part it handed back, floored in its own right.
+          (handed-back (if leaving
+            (get bonded-sats record)
+            (scale-released-from-epoch offered next)
+          ))
         )
         (merge state { record: (merge record {
-          pending: (+ (get pending record)
-            (/ (* (get shares record) (- final-index (get reward-index record)))
-              PRECISION
-            )),
+          pending: (if defer
+            (get pending record)
+            (+ (get pending record)
+              (/ (* (get shares record) (- index (get reward-index record)))
+                PRECISION
+              ))
+          ),
+          ;; Only ever one stash: an epoch settles a cycle into the next one,
+          ;; and the roll after that is twelve cycles further on. Overwriting
+          ;; one is therefore unreachable, and if it ever did happen it would
+          ;; cost that member the rest of the older epoch's tail rather than
+          ;; letting their position drift out of step with the pool.
+          tail-epoch: (if defer
+            (some epoch)
+            none
+          ),
+          tail-shares: (if defer
+            (get shares record)
+            u0
+          ),
+          tail-index: (if defer
+            (get reward-index record)
+            u0
+          ),
           reward-index: u0,
           settled-epoch: next,
           shares: carried,
@@ -1431,9 +1739,7 @@
           ),
           ;; What did not carry across is theirs to take back: the whole
           ;; position on the way out, otherwise whatever was scaled off.
-          released-sats: (+ (get released-sats record)
-            (- (+ (get bonded-sats record) joining-sats) carried)
-          ),
+          released-sats: (+ (get released-sats record) handed-back),
           released-ustx: (+ (get released-ustx record)
             (if leaving
               (get bonded-ustx record)
@@ -1447,8 +1753,54 @@
   )
 )
 
+;; Draw down the claim a member kept on an epoch the pool has already rolled
+;; out of. Re-run on every touch while that epoch is still paying, and dropped
+;; once it settles -- which is what lets a member who left at the roll collect
+;; their share of the bond's final cycle.
+(define-private (accrue-stash (record {
+  shares: uint,
+  bonded-sats: uint,
+  bonded-ustx: uint,
+  queued-sats: uint,
+  queued-ustx: uint,
+  queued-epoch: uint,
+  released-sats: uint,
+  released-ustx: uint,
+  settled-epoch: uint,
+  reward-index: uint,
+  pending: uint,
+  tail-epoch: (optional uint),
+  tail-shares: uint,
+  tail-index: uint,
+  exit-epoch: (optional uint),
+}))
+  (match (get tail-epoch record)
+    epoch (let ((index (default-to u0
+        (get reward-index (map-get? epochs epoch))
+      )))
+      (merge record {
+        pending: (+ (get pending record)
+          (/ (* (get tail-shares record) (- index (get tail-index record)))
+            PRECISION
+          )),
+        tail-index: index,
+        ;; Nothing more can be credited to it: let the stash go.
+        tail-epoch: (if (is-epoch-settled epoch)
+          none
+          (some epoch)
+        ),
+        tail-shares: (if (is-epoch-settled epoch)
+          u0
+          (get tail-shares record)
+        ),
+      })
+    )
+    record
+  )
+)
+
 ;; Accrue what the epoch the member now sits in has credited since their
-;; snapshot. That epoch is still open, so this is re-run on every touch.
+;; snapshot. That epoch is still paying, so this is re-run on every touch.
 (define-private (accrue-current (record {
   shares: uint,
   bonded-sats: uint,
@@ -1461,6 +1813,9 @@
   settled-epoch: uint,
   reward-index: uint,
   pending: uint,
+  tail-epoch: (optional uint),
+  tail-shares: uint,
+  tail-index: uint,
   exit-epoch: (optional uint),
 }))
   (let ((index (default-to u0
@@ -1472,41 +1827,6 @@
       ),
       reward-index: index,
     })
-  )
-)
-
-;; A member the pool has rolled out of gets their principal back as soon as
-;; the roll happens, rather than waiting for the epoch's reward book to close.
-;; Shares are untouched -- `advance-epoch` drops those when the epoch closes,
-;; which is what keeps the bond's last cycle theirs.
-(define-private (release-if-exited (record {
-  shares: uint,
-  bonded-sats: uint,
-  bonded-ustx: uint,
-  queued-sats: uint,
-  queued-ustx: uint,
-  queued-epoch: uint,
-  released-sats: uint,
-  released-ustx: uint,
-  settled-epoch: uint,
-  reward-index: uint,
-  pending: uint,
-  exit-epoch: (optional uint),
-}))
-  (if (and
-      (match (get exit-epoch record)
-        epoch (> (var-get epoch-count) (+ epoch u1))
-        false
-      )
-      (> (+ (get bonded-sats record) (get bonded-ustx record)) u0)
-    )
-    (merge record {
-      released-sats: (+ (get released-sats record) (get bonded-sats record)),
-      released-ustx: (+ (get released-ustx record) (get bonded-ustx record)),
-      bonded-sats: u0,
-      bonded-ustx: u0,
-    })
-    record
   )
 )
 
@@ -1525,6 +1845,9 @@
   settled-epoch: uint,
   reward-index: uint,
   pending: uint,
+  tail-epoch: (optional uint),
+  tail-shares: uint,
+  tail-index: uint,
   exit-epoch: (optional uint),
 }))
   (if (and

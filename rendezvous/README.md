@@ -22,8 +22,16 @@ production source:
 | `Clarinet-bond-staker.toml` | manifest `rv` picks up for `bond-staker` |
 | `rendezvous/bond-escrow.clar` | stands in for pox-5's custody of the staked sBTC |
 
-`contracts/bond-treasury.clar` is deployed as-is: it is production code and
-needs no stand-in.
+`contracts/bond-treasury.clar` and `contracts/bond-bridge.clar` are deployed
+as-is: they are production code and need no stand-in.
+
+`rv` fuzzes one contract, and that is `bond-staker` — the ledger. The bridge's
+own entry points are covered by the unit tests instead, which drive the real
+sBTC bridge in simnet: its signer principal is readable from the sBTC registry,
+so a test can complete a deposit and accept or reject a withdrawal exactly as
+the signers would. What the fuzzer does cover is the ledger side of the bridge:
+its five bridge-only entry points are in the fuzz surface, and every call to
+them from a wallet is expected to bounce.
 
 ## Why there are stand-ins
 
@@ -59,6 +67,24 @@ had credited, and the last claim would have aborted on the underflow. Fixed by
 deriving credit from the epoch's index in one step; pinned by the "never owes
 more than it has credited, across repeated syncs" unit test, which was checked
 to fail against the old code.
+
+**Principal conjured by rounding.** A roll that does not fit scales every
+member's position by the same fraction. Taking the part handed back as the
+*remainder* of the carried part rounded it up, so the members of a scaled roll
+were collectively owed a satoshi more principal than the pool had credited —
+`claim-principal-to-btc` aborted on the underflow, and with another member's
+principal in the pot it would have paid out of it. Fixed by flooring both sides
+independently and letting the sub-satoshi difference fall to unattributed
+principal.
+
+**A member's record describing a position the pool had moved on from.** Epochs
+used to stay open for rewards past their roll, and *positions* waited for that
+too — so members were carried across later than the pool was. A member who had
+deposited for the next bond still showed that deposit as queued after the roll
+had spent it, and `withdraw` / `request-exit` would refund it a second time out
+of another member's queued funds. Fixed by splitting the two clocks: positions
+move with the roll, rewards keep the slower settlement clock, and the stash
+carries a member's claim on the epoch they left across the gap.
 
 **An over-strong invariant, not a contract bug.** An early
 `invariant-member-not-settled-past-an-open-epoch` assumed every member sits at

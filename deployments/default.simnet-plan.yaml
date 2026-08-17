@@ -77,6 +77,11 @@ plan:
   - id: 1
     transactions:
     - transaction-type: emulated-contract-publish
+      contract-name: bond-escrow
+      emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
+      path: rendezvous/bond-escrow.clar
+      clarity-version: 6
+    - transaction-type: emulated-contract-publish
       contract-name: bond-treasury
       emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
       path: contracts/bond-treasury.clar
@@ -84,16 +89,16 @@ plan:
     - transaction-type: emulated-contract-publish
       contract-name: bond-staker
       emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
-      path: contracts/bond-staker.clar
+      path: rendezvous/harnesses/bond-staker.clar
+      clarity-version: 6
+    - transaction-type: emulated-contract-publish
+      contract-name: bond-bridge
+      emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
+      path: contracts/bond-bridge.clar
       clarity-version: 6
     - transaction-type: emulated-contract-publish
       contract-name: fastpool-signer-manager
       emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
       path: ../fastpool-pox-5/contracts/fastpool-signer-manager.clar
-      clarity-version: 6
-    - transaction-type: emulated-contract-publish
-      contract-name: signer-manager
-      emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
-      path: ../fastpool-pox-5/contracts/signer-manager.clar
       clarity-version: 6
     epoch: '4.0'

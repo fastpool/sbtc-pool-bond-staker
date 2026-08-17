@@ -29,6 +29,7 @@ export const MANAGER = "fastpool-signer-manager";
 export const ALT_MANAGER = "signer-manager";
 export const POOL = "bond-staker";
 export const TREASURY = "bond-treasury";
+export const BRIDGE = "bond-bridge";
 
 /** pox-5's bond admin on simnet. */
 export const BOND_ADMIN = "ST000000000000000000002AMW42H";
@@ -59,6 +60,7 @@ const accounts = simnet.getAccounts();
 export const deployer = accounts.get("deployer")!;
 export const poolPrincipal = () => `${deployer}.${POOL}`;
 export const treasuryPrincipal = () => `${deployer}.${TREASURY}`;
+export const bridgePrincipal = () => `${deployer}.${BRIDGE}`;
 export const managerPrincipal = (name = MANAGER) => `${deployer}.${name}`;
 
 export const num = (cv: ClarityValue) => Number(cvToValue(cv, true));
@@ -268,6 +270,187 @@ export const claimRewards = (member: string, who: string = deployer) =>
 export const claimPrincipal = (member: string, who: string = deployer) =>
   simnet.callPublicFn(POOL, "claim-principal", [Cl.principal(member)], who)
     .result;
+
+export const SBTC_REGISTRY = `${SBTC_DEPLOYER}.sbtc-registry`;
+export const SBTC_DEPOSIT = `${SBTC_DEPLOYER}.sbtc-deposit`;
+export const SBTC_WITHDRAWAL = `${SBTC_DEPLOYER}.sbtc-withdrawal`;
+
+/** A p2pkh-shaped bitcoin address, for withdrawal requests. */
+export const btcRecipient = (byte = "11") =>
+  Cl.tuple({
+    version: Cl.bufferFromHex("00"),
+    hashbytes: Cl.bufferFromHex(byte.repeat(20)),
+  });
+
+/** The principal the sBTC protocol lets complete deposits and withdrawals. */
+export const sbtcSigner = () =>
+  plain(
+    simnet.callReadOnlyFn(
+      SBTC_REGISTRY,
+      "get-current-signer-principal",
+      [],
+      deployer,
+    ).result,
+  ) as string;
+
+export const announceBtcDeposit = (
+  who: string,
+  txid: string,
+  sats: number,
+  voutIndex = 0,
+) =>
+  simnet.callPublicFn(
+    BRIDGE,
+    "announce-btc-deposit",
+    [Cl.bufferFromHex(txid), Cl.uint(voutIndex), Cl.uint(sats)],
+    who,
+  ).result;
+
+export const confirmBtcDeposit = (
+  txid: string,
+  voutIndex = 0,
+  who: string = deployer,
+) =>
+  simnet.callPublicFn(
+    BRIDGE,
+    "confirm-btc-deposit",
+    [Cl.bufferFromHex(txid), Cl.uint(voutIndex)],
+    who,
+  ).result;
+
+export const cancelBtcDeposit = (
+  txid: string,
+  voutIndex = 0,
+  who: string = deployer,
+) =>
+  simnet.callPublicFn(
+    BRIDGE,
+    "cancel-btc-deposit",
+    [Cl.bufferFromHex(txid), Cl.uint(voutIndex)],
+    who,
+  ).result;
+
+export const claimPrincipalToBtc = (
+  who: string,
+  maxFee: number,
+  recipient = btcRecipient(),
+) =>
+  simnet.callPublicFn(
+    BRIDGE,
+    "claim-principal-to-btc",
+    [recipient, Cl.uint(maxFee)],
+    who,
+  ).result;
+
+export const reclaimBtcWithdrawal = (
+  requestId: number,
+  who: string = deployer,
+) =>
+  simnet.callPublicFn(
+    BRIDGE,
+    "reclaim-btc-withdrawal",
+    [Cl.uint(requestId)],
+    who,
+  ).result;
+
+export const sweepUnattributed = (recipient: string, who: string = deployer) =>
+  simnet.callPublicFn(
+    POOL,
+    "sweep-unattributed-principal",
+    [Cl.principal(recipient)],
+    who,
+  ).result;
+
+/** Sweep a bitcoin deposit through the bridge, minting sBTC to `recipient`. */
+export function sweepBtcDeposit(
+  txid: string,
+  sats: number,
+  recipient = treasuryPrincipal(),
+  voutIndex = 0,
+) {
+  const height = simnet.burnBlockHeight - 1;
+  const header = (
+    simnet.callReadOnlyFn(
+      SBTC_DEPOSIT,
+      "get-burn-header",
+      [Cl.uint(height)],
+      deployer,
+    ).result as any
+  ).value;
+  return simnet.callPublicFn(
+    SBTC_DEPOSIT,
+    "complete-deposit-wrapper",
+    [
+      Cl.bufferFromHex(txid),
+      Cl.uint(voutIndex),
+      Cl.uint(sats),
+      Cl.principal(recipient),
+      header,
+      Cl.uint(height),
+      Cl.bufferFromHex("bb".repeat(32)),
+    ],
+    sbtcSigner(),
+  ).result;
+}
+
+/** Have the sBTC signers accept or reject a withdrawal request. */
+export function settleBtcWithdrawal(
+  requestId: number,
+  accept: boolean,
+  fee = 1_000,
+) {
+  const height = simnet.burnBlockHeight - 1;
+  const header = (
+    simnet.callReadOnlyFn(
+      SBTC_DEPOSIT,
+      "get-burn-header",
+      [Cl.uint(height)],
+      deployer,
+    ).result as any
+  ).value;
+  return accept
+    ? simnet.callPublicFn(
+        SBTC_WITHDRAWAL,
+        "accept-withdrawal-request",
+        [
+          Cl.uint(requestId),
+          Cl.bufferFromHex("cc".repeat(32)), // bitcoin-txid
+          Cl.uint(0), // signer-bitmap
+          Cl.uint(0), // output-index
+          Cl.uint(fee),
+          header,
+          Cl.uint(height),
+          Cl.bufferFromHex("dd".repeat(32)),
+        ],
+        sbtcSigner(),
+      ).result
+    : simnet.callPublicFn(
+        SBTC_WITHDRAWAL,
+        "reject-withdrawal-request",
+        [Cl.uint(requestId), Cl.uint(0)],
+        sbtcSigner(),
+      ).result;
+}
+
+export const readTreasury = (fn: string, args: ClarityValue[] = []) =>
+  simnet.callReadOnlyFn(TREASURY, fn, args, deployer).result;
+
+export const readBridge = (fn: string, args: ClarityValue[] = []) =>
+  simnet.callReadOnlyFn(BRIDGE, fn, args, deployer).result;
+
+export const btcDeposit = (txid: string, voutIndex = 0) =>
+  plain(
+    readBridge("get-announcement", [
+      Cl.bufferFromHex(txid),
+      Cl.uint(voutIndex),
+    ]),
+  ) as any;
+
+export const btcWithdrawal = (requestId: number) =>
+  plain(readBridge("get-withdrawal", [Cl.uint(requestId)])) as any;
+
+export const unattributedPrincipal = () =>
+  num(readPool("get-unattributed-principal"));
 
 /** Move sBTC into the pool, standing in for a signer-manager reward payout. */
 export const payRewards = (from: string, amount: number) =>

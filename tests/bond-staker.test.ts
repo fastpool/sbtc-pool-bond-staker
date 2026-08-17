@@ -2,6 +2,23 @@ import { Cl } from "@stacks/transactions";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   advanceToBurnHeight,
+  BRIDGE,
+  bridgePrincipal,
+  btcRecipient,
+  readBridge,
+  readTreasury,
+  announceBtcDeposit,
+  btcDeposit,
+  btcWithdrawal,
+  cancelBtcDeposit,
+  claimPrincipalToBtc,
+  confirmBtcDeposit,
+  reclaimBtcWithdrawal,
+  SBTC_REGISTRY,
+  settleBtcWithdrawal,
+  sweepBtcDeposit,
+  sweepUnattributed,
+  unattributedPrincipal,
   ALLOWANCE_SATS,
   ALT_MANAGER,
   bindBond,
@@ -42,6 +59,7 @@ import {
   sbtcBalance,
   setupBond,
   settledMember,
+  settleMember,
   stake,
   stakePreview,
   stxBalance,
@@ -397,9 +415,8 @@ describe("bond-staker: rolling into the next bond", () => {
     expect(Number(poolConfig()["epoch-count"])).toBe(3);
     expect(Number(epoch(2)["bond-index"])).toBe(NEXT_BOND_INDEX + 6);
     expect(Number(settledMember(alice).shares)).toBe(ALICE_SATS);
-    // epoch 1 only closes a cycle into epoch 2, so that is as far as a
-    // settlement can carry her for now
-    expect(Number(settledMember(alice)["settled-epoch"])).toBe(1);
+    // positions move with the pool, so she is carried all the way
+    expect(Number(settledMember(alice)["settled-epoch"])).toBe(2);
   });
 
   it("stops at the wind-down", () => {
@@ -430,15 +447,10 @@ describe("bond-staker: leaving at a roll", () => {
     expect(treasuryBalance()).toBe(ALICE_SATS);
     expect(Number(poolTotals()["released-sats"])).toBe(ALICE_SATS);
 
-    // her shares in epoch 0 outlive the roll -- that is what lets her
-    // collect the bond's final cycle once it pays out
-    expect(Number(settledMember(alice).shares)).toBe(ALICE_SATS);
-    advanceToBurnHeight(
-      readPoxNum("reward-cycle-to-burn-height", [
-        Cl.uint(Number(epoch(1)["first-reward-cycle"]) + 1),
-      ]),
-    );
+    // the roll carries her out: no shares in the new bond, and her principal
+    // is claimable at once
     expect(Number(settledMember(alice).shares)).toBe(0);
+    expect(Number(settledMember(alice)["released-sats"])).toBe(ALICE_SATS);
     expect(Number(settledMember(bob).shares)).toBe(BOB_SATS);
   });
 
@@ -592,16 +604,19 @@ describe("bond-staker: per-bond reward accounting", () => {
     advanceToBurnHeight(bondStartHeight(NEXT_BOND_INDEX) - 288);
     expect(stake().type).toBe("ok");
 
-    // epoch 0 stays open one more cycle, for its last cycle's rewards
+    // pox-5 settles a cycle after it ends, so epoch 0's last cycle pays out
+    // now -- and it is still epoch 0's money
     expect(rewardEpoch()).toBe(0);
     const tail = 1_200_000;
     payRewards(dave, tail);
     expect(Number(plain(syncRewards() as any).epoch)).toBe(0);
-    // ...and that tail belongs to epoch 0's members, alice included
+
     expect(claimableRewards(alice)).toBe((tail * ALICE_SATS) / POOL_SATS);
+    expect(claimableRewards(bob)).toBe((tail * BOB_SATS) / POOL_SATS);
+    // carol was not in that bond
     expect(claimableRewards(carol)).toBe(0);
 
-    // once epoch 0 closes, everything lands in epoch 1
+    // once epoch 0 has settled, everything lands in epoch 1
     advanceToBurnHeight(
       readPoxNum("reward-cycle-to-burn-height", [
         Cl.uint(Number(epoch(1)["first-reward-cycle"]) + 1),
@@ -612,25 +627,80 @@ describe("bond-staker: per-bond reward accounting", () => {
     payRewards(dave, second);
     expect(Number(plain(syncRewards() as any).epoch)).toBe(1);
 
-    // epoch 1's shares are bob's and carol's; alice earns nothing more
     const epochOneShares = BOB_SATS + ALICE_SATS;
     expect(claimableRewards(carol)).toBe((second * ALICE_SATS) / epochOneShares);
+    // alice's claim stopped growing when epoch 0 settled
     expect(claimableRewards(alice)).toBe((tail * ALICE_SATS) / POOL_SATS);
+    expect(Number(epoch(0)["credited"])).toBe(4_000_000 + tail);
+    expect(Number(epoch(1)["credited"])).toBe(second);
   });
 
-  it("lets a member who has left collect their last bond's rewards", () => {
+  it("hands a leaver their principal at the roll, and their last rewards after", () => {
     requestExit(alice);
     rollInto();
-    // alice's principal is out, but her epoch-0 shares still earn
-    expect(claimPrincipal(alice).type).toBe("ok");
-    expect(Number(settledMember(alice)["bonded-sats"])).toBe(0);
 
+    // her position is out of the bond and claimable straight away
+    expect(Number(settledMember(alice)["released-sats"])).toBe(ALICE_SATS);
+    expect(Number(settledMember(alice).shares)).toBe(0);
+    const before = sbtcBalance(alice);
+    expect(claimPrincipal(alice).type).toBe("ok");
+    expect(sbtcBalance(alice)).toBe(before + ALICE_SATS);
+
+    // her claim on the bond she was in is stashed, and still pays out
+    expect(Number(settledMember(alice)["tail-shares"])).toBe(ALICE_SATS);
     const tail = 1_200_000;
     payRewards(dave, tail);
     syncRewards();
-    const before = sbtcBalance(alice);
+    expect(claimableRewards(alice)).toBe((tail * ALICE_SATS) / POOL_SATS);
+
+    const paid = sbtcBalance(alice);
     expect(claimRewards(alice).type).toBe("ok");
-    expect(sbtcBalance(alice)).toBe(before + (tail * ALICE_SATS) / POOL_SATS);
+    expect(sbtcBalance(alice)).toBe(paid + (tail * ALICE_SATS) / POOL_SATS);
+
+    // and once that epoch settles the stash is let go
+    advanceToBurnHeight(
+      readPoxNum("reward-cycle-to-burn-height", [
+        Cl.uint(Number(epoch(1)["first-reward-cycle"]) + 1),
+      ]),
+    );
+    expect(settleMember(alice).type).toBe("ok");
+    expect(member(alice)["tail-epoch"]).toBeNull();
+    expect(Number(member(alice)["tail-shares"])).toBe(0);
+    // later rewards are epoch 1's, and she has no shares there
+    payRewards(dave, 2_000_000);
+    syncRewards();
+    expect(claimableRewards(alice)).toBe(0);
+  });
+
+  it("counts the epoch either side of the roll exactly once", () => {
+    // accrue and claim part of epoch 0 before the roll...
+    payRewards(carol, 4_000_000);
+    syncRewards();
+    expect(claimRewards(alice).type).toBe("ok");
+    expect(claimRewards(bob).type).toBe("ok");
+
+    // ...roll, which stashes what is left of their claim on it...
+    rollInto();
+
+    // ...and pay the rest of epoch 0 afterwards
+    payRewards(dave, 1_200_000);
+    syncRewards();
+
+    const total = 5_200_000;
+    const paidBefore = 4_000_000;
+    expect(claimableRewards(alice)).toBe(
+      (total * ALICE_SATS) / POOL_SATS - (paidBefore * ALICE_SATS) / POOL_SATS,
+    );
+    expect(claimableRewards(bob)).toBe(
+      (total * BOB_SATS) / POOL_SATS - (paidBefore * BOB_SATS) / POOL_SATS,
+    );
+    // between them they are owed exactly what epoch 0 was credited, no more
+    expect(
+      claimableRewards(alice) + claimableRewards(bob) + paidBefore,
+    ).toBe(Number(epoch(0)["credited"]));
+    expect(
+      claimableRewards(alice) + claimableRewards(bob),
+    ).toBeLessThanOrEqual(Number(poolTotals()["unclaimed-rewards"]));
   });
 
   it("never hands out more than it took in", () => {
@@ -681,10 +751,10 @@ describe("bond-staker: rewards across many epochs", () => {
     stakeFirstBond();
 
     payRewards(carol, 4_000_000);
-    syncRewards();
+    syncRewards(); // epoch 0
     rollInto(NEXT_BOND_INDEX);
     payRewards(carol, 4_000_000);
-    syncRewards(); // still epoch 0's tail window
+    syncRewards(); // still epoch 0: its last cycle
     advanceToBurnHeight(
       readPoxNum("reward-cycle-to-burn-height", [
         Cl.uint(Number(epoch(1)["first-reward-cycle"]) + 1),
@@ -695,18 +765,16 @@ describe("bond-staker: rewards across many epochs", () => {
     rollInto(NEXT_BOND_INDEX + 6);
 
     // alice has not touched the contract since epoch 0; one settlement
-    // catches her up across every closed epoch
+    // catches her up across every epoch she was part of
     expect(Number(member(alice)["settled-epoch"])).toBe(0);
-    // epoch 0 paid 8m in two goes, epoch 1 another 8m; epoch 1 is still open
-    // so its accrual settles in place rather than being closed out
-    const expected =
-      (8_000_000 * ALICE_SATS) / POOL_SATS + (8_000_000 * ALICE_SATS) / POOL_SATS;
+    // 8m to epoch 0 across two syncs, 8m to epoch 1
+    const expected = (16_000_000 * ALICE_SATS) / POOL_SATS;
     expect(claimableRewards(alice)).toBe(expected);
 
     const before = sbtcBalance(alice);
     expect(claimRewards(alice).type).toBe("ok");
     expect(sbtcBalance(alice)).toBe(before + expected);
-    expect(Number(member(alice)["settled-epoch"])).toBe(1);
+    expect(Number(member(alice)["settled-epoch"])).toBe(2);
   });
 });
 
@@ -808,18 +876,6 @@ describe("bond-treasury", () => {
 });
 
 describe("bond-staker: a roll that does not fit", () => {
-  /**
-   * Carry members out of the epoch that just ended. A position only moves
-   * once the epoch it was in stops taking rewards, a cycle into the next one.
-   */
-  function closeOutgoingEpoch() {
-    advanceToBurnHeight(
-      readPoxNum("reward-cycle-to-burn-height", [
-        Cl.uint(Number(epoch(1)["first-reward-cycle"]) + 1),
-      ]),
-    );
-  }
-
   /** Bond 8, priced so the pool's STX carries only half its sats. */
   function bindDearerBond(ratio = STX_VALUE_RATIO * 2, maxSats = MAX_SATS) {
     setupBond(NEXT_BOND_INDEX, ALLOWANCE_SATS, ratio);
@@ -860,7 +916,6 @@ describe("bond-staker: a roll that does not fit", () => {
     bindDearerBond();
     advanceToBurnHeight(bondStartHeight(NEXT_BOND_INDEX) - 288);
     stake();
-    closeOutgoingEpoch();
 
     for (const [who, sats] of [
       [alice, ALICE_SATS],
@@ -886,7 +941,6 @@ describe("bond-staker: a roll that does not fit", () => {
     bindDearerBond();
     advanceToBurnHeight(bondStartHeight(NEXT_BOND_INDEX) - 288);
     stake();
-    closeOutgoingEpoch();
 
     const before = sbtcBalance(alice);
     expect(claimPrincipal(alice).type).toBe("ok");
@@ -908,7 +962,6 @@ describe("bond-staker: a roll that does not fit", () => {
     advanceToBurnHeight(bondStartHeight(NEXT_BOND_INDEX) - 288);
     expect(stake().type).toBe("ok");
     expect(Number(epoch(1)["total-shares"])).toBe(POOL_SATS / 4);
-    closeOutgoingEpoch();
     expect(Number(settledMember(alice).shares)).toBe(ALICE_SATS / 4);
     // all the STX still rides, so the position is over-collateralised
     expect(Number(epoch(1)["staked-ustx"])).toBe(
@@ -982,5 +1035,291 @@ describe("bond-staker: a missed bond", () => {
     bootstrap();
     expect(boundBond().stakeable).toBe(true);
     expect(bindBond(BOND_INDEX)).toBeErr(Cl.uint(119)); // ALREADY_BOUND
+  });
+});
+
+describe("bond-staker: joining with L1 bitcoin", () => {
+  const TXID = "a1".repeat(32);
+
+  it("names the treasury as the address to bridge to", () => {
+    bootstrap();
+    const result = plain(announceBtcDeposit(alice, TXID, ALICE_SATS) as any);
+    expect(result["deposit-to"]).toBe(treasuryPrincipal());
+    expect(plain(readBridge("get-deposit-address"))).toBe(treasuryPrincipal());
+  });
+
+  it("takes the STX leg up front and holds the allocation", () => {
+    bootstrap();
+    const ustx = requiredUstx(ALICE_SATS);
+    const stxBefore = stxBalance(alice);
+
+    expect(announceBtcDeposit(alice, TXID, ALICE_SATS).type).toBe("ok");
+
+    // the STX is paid now; the sats are still on bitcoin. The bridge holds the
+    // STX until the deposit lands -- the ledger only counts what it has.
+    expect(stxBalance(alice)).toBe(stxBefore - ustx);
+    expect(stxBalance(bridgePrincipal())).toBe(ustx);
+    expect(stxBalance(poolPrincipal())).toBe(0);
+    expect(treasuryBalance()).toBe(0);
+    expect(Number(poolTotals()["announced-sats"])).toBe(ALICE_SATS);
+    expect(Number(poolTotals()["queued-sats"])).toBe(0);
+    // ...and it counts against the pool's room
+    expect(num(readPool("get-committing-sats"))).toBe(ALICE_SATS);
+    expect(Number(btcDeposit(TXID).sats)).toBe(ALICE_SATS);
+  });
+
+  it("queues the sats once the signers sweep the deposit", () => {
+    bootstrap();
+    announceBtcDeposit(alice, TXID, ALICE_SATS);
+    expect(confirmBtcDeposit(TXID)).toBeErr(Cl.uint(304)); // NOT_SWEPT
+
+    expect(sweepBtcDeposit(TXID, ALICE_SATS).type).toBe("ok");
+    expect(treasuryBalance()).toBe(ALICE_SATS);
+    // permissionless: a keeper can finish the job
+    expect(confirmBtcDeposit(TXID, 0, carol).type).toBe("ok");
+
+    expect(Number(poolTotals()["announced-sats"])).toBe(0);
+    expect(Number(poolTotals()["queued-sats"])).toBe(ALICE_SATS);
+    expect(Number(member(alice)["queued-sats"])).toBe(ALICE_SATS);
+    expect(Number(member(alice)["queued-ustx"])).toBe(requiredUstx(ALICE_SATS));
+    // the STX leg moved from the bridge to the ledger with the sats
+    expect(stxBalance(bridgePrincipal())).toBe(0);
+    expect(stxBalance(poolPrincipal())).toBe(requiredUstx(ALICE_SATS));
+    expect(btcDeposit(TXID)).toBeNull();
+    // alice never touched sBTC
+    expect(sbtcBalance(alice)).toBe(1_000_000_000);
+  });
+
+  it("carries an L1 joiner into the bond like any other member", () => {
+    const { bondStart } = bootstrap();
+    announceBtcDeposit(alice, TXID, ALICE_SATS);
+    sweepBtcDeposit(TXID, ALICE_SATS);
+    confirmBtcDeposit(TXID);
+
+    advanceToBurnHeight(bondStart - 288);
+    expect(stake().type).toBe("ok");
+    expect(Number(settledMember(alice).shares)).toBe(ALICE_SATS);
+    expect(sbtcBalance(POX5)).toBe(ALICE_SATS);
+  });
+
+  it("will not confirm a deposit the bridge sent somewhere else", () => {
+    bootstrap();
+    announceBtcDeposit(alice, TXID, ALICE_SATS);
+    // swept to the pool instead of the treasury
+    sweepBtcDeposit(TXID, ALICE_SATS, poolPrincipal());
+    expect(confirmBtcDeposit(TXID)).toBeErr(Cl.uint(305)); // MISDIRECTED
+  });
+
+  it("will not confirm a deposit smaller than announced", () => {
+    bootstrap();
+    announceBtcDeposit(alice, TXID, ALICE_SATS);
+    sweepBtcDeposit(TXID, ALICE_SATS - 1);
+    expect(confirmBtcDeposit(TXID)).toBeErr(Cl.uint(306)); // TOO_SMALL
+  });
+
+  it("cannot be announced twice, or after the sweep", () => {
+    bootstrap();
+    announceBtcDeposit(alice, TXID, ALICE_SATS);
+    expect(announceBtcDeposit(bob, TXID, ALICE_SATS)).toBeErr(Cl.uint(303));
+
+    const other = "a2".repeat(32);
+    sweepBtcDeposit(other, ALICE_SATS);
+    expect(announceBtcDeposit(bob, other, ALICE_SATS)).toBeErr(Cl.uint(307));
+  });
+
+  it("hands the STX back when an announcement is called off", () => {
+    bootstrap();
+    const stxBefore = stxBalance(alice);
+    announceBtcDeposit(alice, TXID, ALICE_SATS);
+
+    // nobody else can cancel it while it is live
+    expect(cancelBtcDeposit(TXID, 0, bob)).toBeErr(Cl.uint(308));
+    expect(cancelBtcDeposit(TXID, 0, alice).type).toBe("ok");
+
+    expect(stxBalance(alice)).toBe(stxBefore);
+    expect(Number(poolTotals()["announced-sats"])).toBe(0);
+    expect(btcDeposit(TXID)).toBeNull();
+  });
+
+  it("lets anyone free the room once the announcement has gone stale", () => {
+    bootstrap();
+    announceBtcDeposit(alice, TXID, ALICE_SATS);
+    simnet.mineEmptyBurnBlocks(1000);
+    expect(cancelBtcDeposit(TXID, 0, bob).type).toBe("ok");
+    expect(Number(poolTotals()["announced-sats"])).toBe(0);
+  });
+
+  it("cannot be cancelled once the sats have landed", () => {
+    bootstrap();
+    announceBtcDeposit(alice, TXID, ALICE_SATS);
+    sweepBtcDeposit(TXID, ALICE_SATS);
+    expect(cancelBtcDeposit(TXID, 0, alice)).toBeErr(Cl.uint(307));
+  });
+
+  it("counts announcements against the allocation", () => {
+    bootstrap();
+    announceBtcDeposit(alice, TXID, MAX_SATS);
+    expect(deposit(bob, 1)).toBeErr(Cl.uint(105)); // ALLOCATION_EXCEEDED
+    cancelBtcDeposit(TXID, 0, alice);
+    expect(deposit(bob, 1).type).toBe("ok");
+  });
+});
+
+describe("bond-staker: leaving over the sBTC bridge", () => {
+  const MAX_FEE = 10_000;
+
+  /** A member with released principal, ready to be paid out. */
+  function readyToLeave() {
+    const { unlockHeight } = stakeFirstBond();
+    advanceToBurnHeight(unlockHeight);
+    expect(unstakeSbtc().type).toBe("ok");
+    return unlockHeight;
+  }
+
+  it("asks the bridge to pay a bitcoin address", () => {
+    readyToLeave();
+    const result = plain(claimPrincipalToBtc(alice, MAX_FEE) as any);
+
+    expect(Number(result.sats)).toBe(ALICE_SATS);
+    expect(Number(result.amount)).toBe(ALICE_SATS - MAX_FEE);
+    expect(Number(result["max-fee"])).toBe(MAX_FEE);
+
+    // the request is the treasury's, so a refund cannot be read as reward
+    const request = plain(
+      simnet.callReadOnlyFn(
+        SBTC_REGISTRY,
+        "get-withdrawal-request",
+        [Cl.uint(Number(result["request-id"]))],
+        deployer,
+      ).result,
+    );
+    expect(request.sender).toBe(treasuryPrincipal());
+    expect(Number(request.amount)).toBe(ALICE_SATS - MAX_FEE);
+
+    // the sats moved from "released" to "withdrawing" and are still on the
+    // treasury's balance, locked by the bridge
+    const pool = poolTotals();
+    expect(Number(pool["released-sats"])).toBe(BOB_SATS);
+    expect(Number(pool["withdrawing-sats"])).toBe(ALICE_SATS);
+    expect(treasuryBalance()).toBe(POOL_SATS);
+    expect(Number(settledMember(alice)["released-sats"])).toBe(0);
+  });
+
+  it("is the member's call alone, and only for what they hold", () => {
+    readyToLeave();
+    // nobody can spend someone else's sats on a fee
+    expect(claimPrincipalToBtc(carol, MAX_FEE)).toBeErr(Cl.uint(110));
+    // a fee bigger than the position is not a withdrawal
+    expect(claimPrincipalToBtc(alice, ALICE_SATS)).toBeErr(Cl.uint(116));
+  });
+
+  it("burns the sats and pays out bitcoin when the signers accept", () => {
+    readyToLeave();
+    const id = Number(plain(claimPrincipalToBtc(alice, MAX_FEE) as any)["request-id"]);
+    const fee = 1_000;
+    expect(settleBtcWithdrawal(id, true, fee).type).toBe("ok");
+
+    // the amount plus the fee actually spent has left sBTC for good
+    expect(treasuryBalance()).toBe(POOL_SATS - (ALICE_SATS - MAX_FEE) - fee);
+    expect(reclaimBtcWithdrawal(id).type).toBe("ok");
+
+    expect(Number(poolTotals()["withdrawing-sats"])).toBe(0);
+    // alice has nothing left to claim on the sBTC side
+    expect(Number(settledMember(alice)["released-sats"])).toBe(0);
+    // the unspent fee is unattributed principal, not anybody's reward
+    expect(unattributedPrincipal()).toBe(MAX_FEE - fee);
+    expect(sbtcBalance(poolPrincipal())).toBe(0);
+    expect(btcWithdrawal(id)).toBeNull();
+  });
+
+  it("puts the whole amount back when the signers reject", () => {
+    readyToLeave();
+    const id = Number(plain(claimPrincipalToBtc(alice, MAX_FEE) as any)["request-id"]);
+    expect(reclaimBtcWithdrawal(id)).toBeErr(Cl.uint(310)); // still pending
+
+    expect(settleBtcWithdrawal(id, false).type).toBe("ok");
+    expect(reclaimBtcWithdrawal(id, carol).type).toBe("ok"); // permissionless
+
+    expect(Number(settledMember(alice)["released-sats"])).toBe(ALICE_SATS);
+    expect(Number(poolTotals()["withdrawing-sats"])).toBe(0);
+    expect(unattributedPrincipal()).toBe(0);
+
+    // and she can take it on Stacks after all
+    const before = sbtcBalance(alice);
+    expect(claimPrincipal(alice).type).toBe("ok");
+    expect(sbtcBalance(alice)).toBe(before + ALICE_SATS);
+  });
+
+  it("leaves the STX leg to be claimed on Stacks", () => {
+    readyToLeave();
+    const ustx = requiredUstx(ALICE_SATS);
+    claimPrincipalToBtc(alice, MAX_FEE);
+    const before = stxBalance(alice);
+    // the sBTC leg is gone to the bridge, the STX leg is still hers
+    expect(claimPrincipal(alice).type).toBe("ok");
+    expect(stxBalance(alice)).toBe(before + ustx);
+  });
+});
+
+describe("bond-staker: unattributed principal", () => {
+  it("can only be swept by the operator, and never touches member funds", () => {
+    bootstrap();
+    deposit(alice, ALICE_SATS);
+    expect(unattributedPrincipal()).toBe(0);
+    expect(sweepUnattributed(deployer)).toBeErr(Cl.uint(114)); // nothing to take
+
+    // someone bridges to the treasury without announcing it
+    sweepBtcDeposit("ff".repeat(32), 750_000);
+    expect(unattributedPrincipal()).toBe(750_000);
+    expect(sweepUnattributed(carol, alice)).toBeErr(Cl.uint(100)); // UNAUTHORIZED
+
+    const before = sbtcBalance(carol);
+    expect(sweepUnattributed(carol).type).toBe("ok");
+    expect(sbtcBalance(carol)).toBe(before + 750_000);
+    // alice's deposit is untouched
+    expect(treasuryBalance()).toBe(ALICE_SATS);
+    expect(unattributedPrincipal()).toBe(0);
+  });
+});
+
+describe("bond-staker: the ledger's bridge hooks", () => {
+  it("answer to the bridge contract and nobody else", () => {
+    bootstrap();
+    const calls: Array<[string, any[]]> = [
+      ["reserve-bridged-deposit", [Cl.principal(alice), Cl.uint(ALICE_SATS)]],
+      ["abandon-bridged-deposit", [Cl.uint(ALICE_SATS)]],
+      [
+        "credit-bridged-deposit",
+        [Cl.principal(alice), Cl.uint(ALICE_SATS), Cl.uint(1)],
+      ],
+      ["debit-released-for-bridge", [Cl.principal(alice), Cl.uint(1)]],
+      [
+        "settle-bridge-withdrawal",
+        [Cl.principal(alice), Cl.uint(1), Cl.bool(false)],
+      ],
+    ];
+    for (const [fn, args] of calls) {
+      for (const who of [alice, deployer]) {
+        expect(simnet.callPublicFn(POOL, fn, args, who).result).toBeErr(
+          Cl.uint(100), // UNAUTHORIZED
+        );
+      }
+    }
+  });
+
+  it("only let the bridge put principal into the sBTC bridge", () => {
+    bootstrap();
+    deposit(alice, ALICE_SATS);
+    for (const who of [alice, deployer]) {
+      expect(
+        simnet.callPublicFn(
+          TREASURY,
+          "request-btc-withdrawal",
+          [Cl.uint(1000), btcRecipient(), Cl.uint(10)],
+          who,
+        ).result,
+      ).toBeErr(Cl.uint(200)); // treasury UNAUTHORIZED
+    }
+    expect(plain(readTreasury("get-bridge"))).toBe(bridgePrincipal());
   });
 });

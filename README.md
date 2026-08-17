@@ -11,11 +11,13 @@ without ever unwinding the position.
 
 | contract | role |
 | --- | --- |
-| `bond-staker` | the pool: deposits, shares, the bond position, rewards |
-| `bond-treasury` | holds the pooled sBTC principal; only `bond-staker` can move it |
+| `bond-treasury` | holds the pooled sBTC principal |
+| `bond-staker` | the ledger: deposits, shares, the bond position, rewards |
+| `bond-bridge` | the L1 bitcoin on-ramp and off-ramp |
 
-Deploy the treasury first: `bond-staker` calls it, while the treasury's
-reference back is only a principal value.
+Deploy in that order — each calls the ones above it and is called by none of
+them, so there is no cycle to break. `bond-treasury` names its two callers as
+principal values, which do not have to exist yet.
 
 Because the principal lives in the treasury, any sBTC `bond-staker` holds is
 reward — there is no reserve to net off before splitting a payout. The STX leg
@@ -50,10 +52,19 @@ across untouched.
 
 Rewards arrive as a bare sBTC transfer, and pox-5 settles a reward cycle only
 once it has ended, so a bond's final cycle pays out *after* the roll that
-replaced it. An epoch therefore stays open for rewards until the next epoch has
-a full reward cycle behind it, and `sync-rewards` credits the oldest open
-epoch. That is what makes a leaver's final-cycle rewards reach them rather than
-the new membership.
+replaced it. The pool therefore runs two clocks:
+
+- **positions** move when the pool rolls, so a member's record never describes a
+  position the pool has already moved on from;
+- **rewards** move when an epoch settles — a cycle into the next bond — so the
+  bond a member was actually in is the one that pays them.
+
+The gap is bridged by a *stash*: when the roll carries a member out of an epoch
+that is still paying, their claim on it is set aside and keeps drawing down
+until that epoch settles. A member who leaves at the roll gets their principal
+back immediately *and* their share of the bond's final cycle when it arrives.
+There is only ever one stash to hold — an epoch settles a cycle into the next
+one, and the roll after that is a whole bond term further on.
 
 ## Lifecycle
 
@@ -63,6 +74,9 @@ the new membership.
 | `bind-bond` | operator, once per bond | after the bond admin allowlists this contract. Opens deposits |
 | `deposit` | anyone | while a bond is bound and has not started |
 | `deposit-stx` | anyone | to raise the STX behind the pool's sats |
+| `bond-bridge.announce-btc-deposit` | anyone | to join with L1 bitcoin, paying the STX leg |
+| `bond-bridge.confirm-btc-deposit` | anyone | once the sBTC signers have swept it |
+| `bond-bridge.claim-principal-to-btc` | a member | to take released principal out as bitcoin |
 | `withdraw` | a depositor | until their deposit is staked |
 | `stake` | **permissionless** | 288 burn blocks before the bound bond starts. First call opens epoch 0, later calls roll |
 | `request-exit` / `cancel-exit` | a member | released at the next roll |
@@ -105,6 +119,40 @@ roll, since it does not depend on what the epoch does next.
 
 A bond that comes and goes unstaked can be replaced by `bind-bond`, so a
 missed window costs one bond period rather than the pool's whole future.
+
+## Joining and leaving with L1 bitcoin
+
+An sBTC deposit is a bare mint: the signers credit whichever principal the
+bitcoin transaction named and call nothing, so a deposit addressed to the pool
+arrives with no record of who sent it. `bond-bridge` has the member tie it
+themselves, in advance:
+
+1. `announce-btc-deposit(txid, vout, sats)` — records the transaction they are
+   about to broadcast and takes its STX leg. This is the one Stacks transaction
+   they were always going to have to send, since the STX cannot come from
+   bitcoin.
+2. They broadcast, addressing the bitcoin to `bond-treasury`.
+3. `confirm-btc-deposit(txid, vout)` — permissionless. Reads the sBTC registry,
+   checks the sats landed in the treasury, and has the ledger queue them.
+
+Announcing *before* broadcasting is what makes this safe: until the transaction
+is out, nobody else can know its txid to announce it first. An announcement
+holds allocation room and can be cancelled for its STX back until the sweep
+lands — by the member at any time, by anyone after a week.
+
+Going the other way, `claim-principal-to-btc(recipient, max-fee)` hands a
+member's released principal to the sBTC signers to pay out on bitcoin. The
+request is made by `bond-treasury`, not the bridge: a rejected request unlocks
+sBTC back to the *requester*, and that has to land somewhere the pool counts as
+principal rather than as reward. `reclaim-btc-withdrawal(request-id)` settles
+the outcome — putting the full amount back on the member's claim if the signers
+rejected it. The STX leg is unaffected and still comes back on Stacks.
+
+Never bridge to `bond-staker` itself: sBTC arriving there is taken for reward
+and split among the members. Anything that reaches the treasury without an
+announcement is unattributed, and only the operator's
+`sweep-unattributed-principal` can move it — an amount measured as the balance
+*above* everything owed, so it can never reach member principal.
 
 ## Redeploying
 

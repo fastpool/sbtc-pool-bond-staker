@@ -42,3 +42,10 @@ epoch = "4.0"
 path = "contracts/bond-staker.clar"
 clarity_version = 6
 epoch = "4.0"
+
+# The L1 on- and off-ramp. Deployed last: it calls the two above, and neither
+# calls it.
+[contracts.bond-bridge]
+path = "contracts/bond-bridge.clar"
+clarity_version = 6
+epoch = "4.0"

@@ -56,7 +56,10 @@
   )
   (let ((start (+ burn-block-height u1 (mod blocks-ahead u200))))
     (asserts! (not (var-get finished)) ERR_ALREADY_UNSTAKED)
-    (asserts! (not (var-get bond-bound)) ERR_BOND_ALREADY_BOUND)
+    ;; Same rule as `bind-bond`: a bond whose window has closed unstaked can be
+    ;; replaced. rv jumps hundreds of burn blocks between rounds, so without
+    ;; this the first missed window would end the run.
+    (asserts! (not (can-still-stake)) ERR_BOND_ALREADY_BOUND)
     (if (is-eq (var-get epoch-count) u0)
       (begin
         (var-set signer-manager DEPLOYER)
@@ -202,7 +205,7 @@
 ;; without this the deposit-dependent half of the contract is never reached.
 (define-public (harness-deposit (seed uint))
   (let (
-      (committing (get sats (get-stake-preview)))
+      (committing (get-committing-sats))
       (room (if (> (var-get pending-max-sats) committing)
         (- (var-get pending-max-sats) committing)
         u0
@@ -231,12 +234,25 @@
   (>= (get-sbtc-balance) (get-unclaimed-rewards))
 )
 
-;; The treasury holds the principal that pox-5 does not: deposits waiting for
-;; a bond, and positions that have ended and not yet been claimed. Exactly
-;; that, to the satoshi.
-(define-read-only (invariant-treasury-holds-queued-and-released)
-  (is-eq (get-treasury-balance)
-    (+ (var-get queued-sats) (var-get released-sats))
+;; The treasury holds the principal that pox-5 does not: deposits waiting for a
+;; bond, positions that have ended and not yet been claimed, and sats locked in
+;; the sBTC bridge on their way to L1. It may hold more -- an unspent
+;; withdrawal fee, an unannounced bridge deposit -- but never less.
+(define-read-only (invariant-treasury-covers-its-books)
+  (>= (get-treasury-balance)
+    (+ (var-get queued-sats)
+      (+ (var-get released-sats) (var-get withdrawing-sats))
+    ))
+)
+
+;; Anything above the books is unattributed, and that is the only thing the
+;; operator's sweep can reach.
+(define-read-only (invariant-sweep-cannot-reach-principal)
+  (<= (+ (get-unattributed-principal)
+      (+ (var-get queued-sats)
+        (+ (var-get released-sats) (var-get withdrawing-sats))
+      ))
+    (get-treasury-balance)
   )
 )
 
@@ -418,6 +434,9 @@
         settled-epoch: u0,
         reward-index: u0,
         pending: (mod pending u100000000),
+        tail-epoch: none,
+        tail-shares: u0,
+        tail-index: u0,
         exit-epoch: none,
       })
       (settled (settle record))
