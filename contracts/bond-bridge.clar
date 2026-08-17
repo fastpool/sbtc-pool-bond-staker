@@ -107,9 +107,7 @@
     (txid (buff 32))
     (vout-index uint)
   )
-  (contract-call? SBTC_REGISTRY
-    get-completed-deposit txid vout-index
-  )
+  (contract-call? SBTC_REGISTRY get-completed-deposit txid vout-index)
 )
 
 ;; The STX a deposit of `sats` has to be accompanied by, for the bond the pool
@@ -135,9 +133,7 @@
       ;; Reserves the pool's room and tells us what the STX leg comes to.
       ;; Rejects a member on the way out, a bond that has started, and a
       ;; deposit the pool has no room for.
-      (ustx (try! (contract-call? .bond-staker reserve-bridged-deposit member
-        sats
-      )))
+      (ustx (try! (contract-call? .bond-staker reserve-bridged-deposit member sats)))
     )
     (asserts! (> sats u0) ERR_INVALID_AMOUNT)
     ;; Nothing to announce if the bridge has already dealt with it: the sats
@@ -206,8 +202,7 @@
       vout-index: vout-index,
     })
     ;; Hand the STX leg over first, so the ledger holds it before it counts it.
-    (try! (as-contract?
-      ((with-stx ustx))
+    (try! (as-contract? ((with-stx ustx))
       (try! (stx-transfer? ustx tx-sender .bond-staker))
     ))
     (try! (contract-call? .bond-staker credit-bridged-deposit member sats ustx))
@@ -257,10 +252,7 @@
       vout-index: vout-index,
     })
     (try! (contract-call? .bond-staker abandon-bridged-deposit (get sats claim)))
-    (try! (as-contract?
-      ((with-stx ustx))
-      (try! (stx-transfer? ustx tx-sender member))
-    ))
+    (try! (as-contract? ((with-stx ustx)) (try! (stx-transfer? ustx tx-sender member))))
 
     (let ((result {
         member: member,
@@ -302,14 +294,11 @@
       (member tx-sender)
       ;; Moves the member's released sats into the pool's "withdrawing"
       ;; bucket and tells us how much that was.
-      (locked (try! (contract-call? .bond-staker debit-released-for-bridge
-        member max-fee
-      )))
+      (locked (try! (contract-call? .bond-staker debit-released-for-bridge member max-fee)))
     )
-    (let ((request-id (try!
-        (contract-call? .bond-treasury request-btc-withdrawal
-          (- locked max-fee) recipient max-fee
-        ))))
+    (let ((request-id (try! (contract-call? .bond-treasury request-btc-withdrawal (- locked max-fee)
+        recipient max-fee
+      ))))
       (map-set withdrawals request-id {
         member: member,
         sats: locked,
@@ -336,10 +325,7 @@
 (define-public (reclaim-btc-withdrawal (request-id uint))
   (let (
       (request (unwrap! (get-withdrawal request-id) ERR_UNKNOWN_WITHDRAWAL))
-      (bridged (unwrap!
-        (contract-call? SBTC_REGISTRY
-          get-withdrawal-request request-id
-        )
+      (bridged (unwrap! (contract-call? SBTC_REGISTRY get-withdrawal-request request-id)
         ERR_UNKNOWN_WITHDRAWAL
       ))
       (accepted (unwrap! (get status bridged) ERR_WITHDRAWAL_PENDING))
@@ -350,9 +336,7 @@
     ;; Rejected: the sBTC bridge has unlocked the lot back to the treasury, so
     ;; put it back on the member's claim. Accepted: the bitcoin went out, and
     ;; whatever was left of `max-fee` is unattributed principal.
-    (try! (contract-call? .bond-staker settle-bridge-withdrawal member sats
-      accepted
-    ))
+    (try! (contract-call? .bond-staker settle-bridge-withdrawal member sats accepted))
 
     (let ((result {
         member: member,

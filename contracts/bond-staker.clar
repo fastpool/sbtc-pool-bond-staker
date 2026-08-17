@@ -304,8 +304,6 @@
 ;; settled yet. Still part of the treasury's balance until the signers sweep.
 (define-data-var withdrawing-sats uint u0)
 
-
-
 ;;; Pooled rewards
 ;;
 ;; Credit is derived from an epoch's reward index in one step -- never
@@ -424,12 +422,8 @@
 ;; `sats / eligible-sats` and the remainder released to them.
 (define-read-only (get-stake-preview)
   (let (
-      (eligible (+ (- (var-get bonded-sats) (var-get exiting-sats))
-        (var-get queued-sats)
-      ))
-      (ustx (+ (- (var-get bonded-ustx) (var-get exiting-ustx))
-        (var-get queued-ustx)
-      ))
+      (eligible (+ (- (var-get bonded-sats) (var-get exiting-sats)) (var-get queued-sats)))
+      (ustx (+ (- (var-get bonded-ustx) (var-get exiting-ustx)) (var-get queued-ustx)))
       (required (get-required-ustx eligible))
       (allocation (var-get pending-max-sats))
       (affordable (get-sats-for-ustx ustx))
@@ -477,9 +471,7 @@
 ;; first matters: a pool funded to the satoshi -- which is what `deposit`
 ;; charges for -- must not be scaled back by a rounding artefact.
 (define-read-only (get-sats-for-ustx (ustx uint))
-  (let ((per-million (* (var-get pending-stx-value-ratio)
-      (var-get pending-min-ustx-ratio)
-    )))
+  (let ((per-million (* (var-get pending-stx-value-ratio) (var-get pending-min-ustx-ratio))))
     (if (is-eq per-million u0)
       u0
       (let ((exact (/ (* ustx u1000000) per-million)))
@@ -501,10 +493,7 @@
 )
 
 (define-private (get-sbtc-balance)
-  (unwrap-panic
-    (contract-call? SBTC
-      get-balance current-contract
-    ))
+  (unwrap-panic (contract-call? SBTC get-balance current-contract))
 )
 
 ;; Rewards credited to members that the pool has not paid out yet.
@@ -562,8 +551,8 @@
 (define-private (is-epoch-settled (epoch uint))
   (match (map-get? epochs (+ epoch u1))
     next (>= burn-block-height
-      (contract-call? POX_5
-        reward-cycle-to-burn-height (+ (get first-reward-cycle next) u1)
+      (contract-call? POX_5 reward-cycle-to-burn-height
+        (+ (get first-reward-cycle next) u1)
       ))
     false
   )
@@ -714,11 +703,7 @@
   (begin
     (asserts! (is-eq tx-sender DEPLOYER) ERR_UNAUTHORIZED)
     (asserts! (not (var-get initialized)) ERR_ALREADY_INITIALIZED)
-    (asserts!
-      (is-some
-        (contract-call? POX_5 get-signer-info
-          manager
-        ))
+    (asserts! (is-some (contract-call? POX_5 get-signer-info manager))
       ERR_SIGNER_NOT_REGISTERED
     )
     (var-set signer-manager manager)
@@ -744,26 +729,14 @@
     (allocation-sats uint)
   )
   (let (
-      (bond (unwrap!
-        (contract-call? POX_5 get-protocol-bond
-          index
-        )
-        ERR_BOND_NOT_FOUND
-      ))
-      (allowance (unwrap!
-        (contract-call? POX_5 get-bond-allowance
-          index current-contract
-        )
+      (bond (unwrap! (contract-call? POX_5 get-protocol-bond index) ERR_BOND_NOT_FOUND))
+      (allowance (unwrap! (contract-call? POX_5 get-bond-allowance index current-contract)
         ERR_NOT_ALLOWLISTED
       ))
-      (start-height (contract-call? POX_5
-        bond-period-to-burn-height index
-      ))
-      (start-cycle (contract-call? POX_5
-        bond-period-to-reward-cycle index
-      ))
-      (unlock-height (contract-call? POX_5
-        reward-cycle-to-burn-height (+ start-cycle BOND_LENGTH_CYCLES)
+      (start-height (contract-call? POX_5 bond-period-to-burn-height index))
+      (start-cycle (contract-call? POX_5 bond-period-to-reward-cycle index))
+      (unlock-height (contract-call? POX_5 reward-cycle-to-burn-height
+        (+ start-cycle BOND_LENGTH_CYCLES)
       ))
     )
     (asserts! (var-get initialized) ERR_NOT_INITIALIZED)
@@ -909,9 +882,7 @@
       (index (var-get pending-bond-index))
       (custodied (var-get bonded-sats))
       (epoch (var-get epoch-count))
-      (start-cycle (contract-call? POX_5
-        bond-period-to-reward-cycle index
-      ))
+      (start-cycle (contract-call? POX_5 bond-period-to-reward-cycle index))
     )
     (asserts! (var-get bond-bound) ERR_NO_BOND_BOUND)
     (asserts! (not (var-get finished)) ERR_ALREADY_UNSTAKED)
@@ -928,9 +899,7 @@
     ;; staker and what the new bond needs, so top the contract up first when
     ;; the position is growing.
     (if (> sats custodied)
-      (try! (contract-call? .bond-treasury payout (- sats custodied)
-        current-contract
-      ))
+      (try! (contract-call? .bond-treasury payout (- sats custodied) current-contract))
       u0
     )
 
@@ -938,34 +907,29 @@
         (
           ;; Covers whichever way the difference moves: out to pox-5 when the
           ;; position grows, out to the treasury when it shrinks.
-          (with-ft SBTC
-            "sbtc-token" (if (> sats custodied)
-              (- sats custodied)
-              (- custodied sats)
-            ))
+          (with-ft SBTC "sbtc-token"
+          (if (> sats custodied)
+            (- sats custodied)
+            (- custodied sats)
+          ))
           ;; pox-5 locks the pooled STX for the bond term, and resizes the
           ;; lock in place when rolling.
           (with-staking ustx)
           (with-pox)
         )
-        (let ((registered (try!
-            (contract-call? POX_5
-              register-for-bond index manager ustx (err sats) none
-            ))))
+        (let ((registered (try! (contract-call? POX_5 register-for-bond index manager ustx (err sats)
+            none
+          ))))
           ;; A shrinking roll refunds the difference to the staker; send it
           ;; back to the treasury so this contract holds rewards only.
           (if (< sats custodied)
-            (try!
-              (contract-call?
-                SBTC transfer
-                (- custodied sats) tx-sender .bond-treasury none
-              ))
+            (try! (contract-call? SBTC transfer (- custodied sats) tx-sender
+              .bond-treasury none
+            ))
             true
           )
           registered
-        )
-      ))))
-
+        )))))
       (map-set epochs epoch {
         bond-index: index,
         first-reward-cycle: start-cycle,
@@ -1037,22 +1001,13 @@
         ;; back to the treasury, so that what this contract holds is rewards
         ;; and nothing else.
         (
-          (with-ft SBTC
-            "sbtc-token" sats
-          )
+          (with-ft SBTC "sbtc-token" sats)
           (with-pox)
         )
-        (let ((unstaked (try!
-            (contract-call? POX_5 unstake-sbtc
-              manager sats
-            ))))
-          (try!
-            (contract-call? SBTC
-              transfer sats tx-sender .bond-treasury none
-            ))
+        (let ((unstaked (try! (contract-call? POX_5 unstake-sbtc manager sats))))
+          (try! (contract-call? SBTC transfer sats tx-sender .bond-treasury none))
           unstaked
-        )
-      ))))
+        )))))
       (print (merge { topic: "unstake-sbtc" } result))
       (ok result)
     )
@@ -1080,10 +1035,7 @@
     (let ((result (try! (as-contract?
         ;; Only the signer behind the position changes: no asset may move.
         ((with-pox))
-        (try!
-          (contract-call? POX_5
-            update-bond-registration manager old-manager none
-          ))
+        (try! (contract-call? POX_5 update-bond-registration manager old-manager none))
       ))))
       (print (merge { topic: "update-bond-registration" } result))
       (ok result)
@@ -1229,14 +1181,8 @@
     ;; of an epoch sum to its total.
     (var-set total-paid (+ (var-get total-paid) amount))
 
-    (try! (as-contract?
-      ((with-ft SBTC
-        "sbtc-token" amount
-      ))
-      (try!
-        (contract-call? SBTC
-          transfer amount tx-sender member none
-        ))
+    (try! (as-contract? ((with-ft SBTC "sbtc-token" amount))
+      (try! (contract-call? SBTC transfer amount tx-sender member none))
     ))
 
     (print {
@@ -1315,8 +1261,7 @@
     (asserts! (<= (+ (get-committing-sats) sats) (var-get pending-max-sats))
       ERR_ALLOCATION_EXCEEDED
     )
-    (asserts!
-      (is-none (get exit-epoch (settle (get-or-create-member member))))
+    (asserts! (is-none (get exit-epoch (settle (get-or-create-member member))))
       ERR_ALREADY_EXITING
     )
     (var-set announced-sats (+ (var-get announced-sats) sats))
@@ -1467,10 +1412,7 @@
   )
   (begin
     (if (> sats u0)
-      (try!
-        (contract-call? SBTC
-          transfer sats depositor .bond-treasury none
-        ))
+      (try! (contract-call? SBTC transfer sats depositor .bond-treasury none))
       true
     )
     (if (> ustx u0)
@@ -1548,8 +1490,7 @@
       u0
     )
     (if (> ustx u0)
-      (try! (as-contract?
-        ((with-stx ustx))
+      (try! (as-contract? ((with-stx ustx))
         (try! (stx-transfer? ustx tx-sender recipient))
       ))
       true
@@ -1584,10 +1525,12 @@
     ;; is about to be replaced is banked first, and after, so one the fold has
     ;; just created is drawn down in the same breath. Running it twice is
     ;; harmless -- the second pass finds nothing new to credit.
-    (accrue-current (accrue-stash (get record (fold advance-epoch CATCHUP_STEPS {
-      record: (commit-queue (accrue-stash record)),
-      done: false,
-    }))))
+    (accrue-current (accrue-stash (get record
+      (fold advance-epoch CATCHUP_STEPS {
+        record: (commit-queue (accrue-stash record)),
+        done: false,
+      })
+    )))
   )
 )
 
@@ -1619,9 +1562,7 @@
       (< (get queued-epoch record) (var-get epoch-count))
     )
     (let (
-        (committed (scale-into-epoch (get queued-sats record)
-          (get queued-epoch record)
-        ))
+        (committed (scale-into-epoch (get queued-sats record) (get queued-epoch record)))
         (handed-back (scale-released-from-epoch (get queued-sats record)
           (get queued-epoch record)
         ))
@@ -1748,7 +1689,8 @@
             )),
           queued-sats: (- (get queued-sats record) joining-sats),
           queued-ustx: (- (get queued-ustx record) joining-ustx),
-        }) })
+        }) }
+        )
       )
     )
   )
@@ -1776,9 +1718,7 @@
   exit-epoch: (optional uint),
 }))
   (match (get tail-epoch record)
-    epoch (let ((index (default-to u0
-        (get reward-index (map-get? epochs epoch))
-      )))
+    epoch (let ((index (default-to u0 (get reward-index (map-get? epochs epoch)))))
       (merge record {
         pending: (+ (get pending record)
           (/ (* (get tail-shares record) (- index (get tail-index record)))
