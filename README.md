@@ -7,6 +7,23 @@ the pox-5 *staker* — the principal on the bond's allowlist, whose sBTC pox-5
 custodies and whose STX pox-5 locks — and it rolls from one bond to the next
 without ever unwinding the position.
 
+## Audit scope
+
+Pinned to **`0f8219cc`** (*feat: remove trust from operator*, 2026-08-17), and
+the three contracts under `contracts/` at that commit:
+
+    bond-treasury.clar
+    bond-staker.clar
+    bond-bridge.clar
+
+Not in scope, and not deployed: `tests/`, `rendezvous/` (fuzzing harness and
+its escrow stand-in), `scripts/`, `ui/`.
+
+`contracts/` holds the simnet flavour of the two protocol addresses — see
+[Networks](#networks). A deployment is byte-identical apart from those
+rewrites, so audit the source and re-run `pnpm run build:<network>` to check
+the built artefact against it.
+
 ## Contracts
 
 | contract | role |
