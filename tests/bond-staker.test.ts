@@ -3,6 +3,13 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   advanceToBurnHeight,
   BRIDGE,
+  canUseSigner,
+  isOperator,
+  updateOperator,
+  distrustSigner,
+  signerHash,
+  trustedSigner,
+  trustSigner,
   bridgePrincipal,
   btcRecipient,
   readBridge,
@@ -798,7 +805,70 @@ describe("bond-staker: moving to another signer", () => {
     );
   });
 
+  it("will not move onto a signer manager nobody vetted", () => {
+    expect(canUseSigner(altPrincipal())).toBe(false);
+    expect(updateBondRegistration(altPrincipal(), managerPrincipal())).toBeErr(
+      Cl.uint(126), // SIGNER_NOT_TRUSTED
+    );
+  });
+
+  it("holds a newly trusted hash until the pool rolls", () => {
+    const hash = signerHash(altPrincipal());
+    expect(hash).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(trustSigner(hash, alice)).toBeErr(Cl.uint(100)); // operator only
+
+    expect(trustSigner(hash).type).toBe("ok");
+    // on chain from the moment it is added, so members can see it coming
+    expect(Number(trustedSigner(hash))).toBe(1);
+    expect(canUseSigner(altPrincipal())).toBe(false);
+    expect(updateBondRegistration(altPrincipal(), managerPrincipal())).toBeErr(
+      Cl.uint(126),
+    );
+    // ...and re-adding must not restart the clock
+    expect(trustSigner(hash)).toBeErr(Cl.uint(127)); // ALREADY_TRUSTED
+
+    // time alone does not unlock it -- only the roll does, because the roll is
+    // the one moment a member who objects can be gone
+    advanceToBurnHeight(simnet.burnBlockHeight + 4 * CYCLE_LENGTH);
+    expect(canUseSigner(altPrincipal())).toBe(false);
+
+    expect(rollInto().type).toBe("ok");
+    expect(canUseSigner(altPrincipal())).toBe(true);
+    expect(
+      updateBondRegistration(altPrincipal(), managerPrincipal()).type,
+    ).toBe("ok");
+  });
+
+  it("keeps an emergency switch open to an already-vetted manager", () => {
+    // trusted before the epoch was staked, so it needs no further wait
+    const hash = signerHash(altPrincipal());
+    trustSigner(hash);
+    rollInto();
+    // mid-bond, with no roll in sight, the operator can still move onto it
+    expect(
+      updateBondRegistration(altPrincipal(), managerPrincipal()).type,
+    ).toBe("ok");
+    expect(poolConfig()["signer-manager"]).toBe(altPrincipal());
+  });
+
+  it("drops a hash at once, with no delay to wait out", () => {
+    const hash = signerHash(altPrincipal());
+    trustSigner(hash);
+    rollInto();
+    expect(canUseSigner(altPrincipal())).toBe(true);
+
+    expect(distrustSigner(hash, alice)).toBeErr(Cl.uint(100)); // operator only
+    expect(distrustSigner(hash).type).toBe("ok");
+    expect(canUseSigner(altPrincipal())).toBe(false);
+    expect(updateBondRegistration(altPrincipal(), managerPrincipal())).toBeErr(
+      Cl.uint(126),
+    );
+    expect(distrustSigner(hash)).toBeErr(Cl.uint(126)); // nothing to remove
+  });
+
   it("re-points the position and the pool's own pin", () => {
+    trustSigner(signerHash(altPrincipal()));
+    rollInto();
     expect(
       updateBondRegistration(altPrincipal(), managerPrincipal()).type,
     ).toBe("ok");
@@ -816,6 +886,12 @@ describe("bond-staker: moving to another signer", () => {
     // the position is untouched
     expect(Number(membership["amount-sats"])).toBe(POOL_SATS);
   });
+
+  it("trusts the manager it was initialized with, from the start", () => {
+    expect(canUseSigner(managerPrincipal())).toBe(true);
+    expect(Number(trustedSigner(signerHash(managerPrincipal())))).toBe(0);
+  });
+
 });
 
 describe("bond-treasury", () => {
@@ -1323,3 +1399,92 @@ describe("bond-staker: the ledger's bridge hooks", () => {
     expect(plain(readTreasury("get-bridge"))).toBe(bridgePrincipal());
   });
 });
+
+describe("bond-staker: notice on a bound bond", () => {
+  it("will not stake a bond the members have had no time to read", () => {
+    registerSignerManager();
+    initializePool();
+    setupBond(); // advances to two cycles before the bond starts
+    const bondStart = bondStartHeight(BOND_INDEX);
+
+    // bound late, deep inside the stake window
+    advanceToBurnHeight(bondStart - 300);
+    expect(bindBond().type).toBe("ok");
+    const bond = boundBond();
+    expect(Number(bond["notice-ends-at"])).toBe(bondStart - 300 + 576);
+
+    deposit(alice, ALICE_SATS);
+    advanceToBurnHeight(bondStart - 288);
+    // inside the window, but the notice has not run out
+    expect(stake()).toBeErr(Cl.uint(108)); // TOO_EARLY
+
+    // and it never will: the notice outlasts the bond's start, so a bond bound
+    // this late simply cannot be staked. The deposit is not stuck -- it stays
+    // withdrawable, and the operator can bind the next bond along.
+    advanceToBurnHeight(bondStart);
+    expect(stake()).toBeErr(Cl.uint(109)); // TOO_LATE
+    expect(withdraw(alice).type).toBe("ok");
+  });
+
+  it("stakes normally when the bond was bound in good time", () => {
+    const { bondStart } = bootstrap();
+    const bond = boundBond();
+    // bound two cycles out, so the notice is long gone by the window
+    expect(Number(bond["notice-ends-at"])).toBeLessThan(bondStart - 288);
+    deposit(alice, ALICE_SATS);
+    advanceToBurnHeight(bondStart - 288);
+    expect(stake().type).toBe("ok");
+  });
+});
+
+describe("bond-staker: rotating the operator", () => {
+  beforeEach(() => {
+    bootstrap();
+  });
+
+  it("starts with the operator named at initialize", () => {
+    expect(isOperator(deployer)).toBe(true);
+    expect(isOperator(alice)).toBe(false);
+  });
+
+  it("is only for operators, and never for your own entry", () => {
+    expect(updateOperator(bob, true, alice)).toBeErr(Cl.uint(100));
+    // an operator cannot disable themselves, so the seat cannot be dropped by
+    // one key acting alone
+    expect(updateOperator(deployer, false, deployer)).toBeErr(Cl.uint(100));
+  });
+
+  it("hands the seat over in two moves", () => {
+    expect(updateOperator(alice, true).type).toBe("ok");
+    expect(isOperator(alice)).toBe(true);
+    // both hold it in the meantime, so there is no gap
+    expect(isOperator(deployer)).toBe(true);
+
+    // the newcomer retires the old key
+    expect(updateOperator(deployer, false, alice).type).toBe("ok");
+    expect(isOperator(deployer)).toBe(false);
+    expect(bindBond(NEXT_BOND_INDEX)).toBeErr(Cl.uint(100)); // old key is out
+
+    // and the new one can do the job
+    setupBond(NEXT_BOND_INDEX);
+    expect(bindBond(NEXT_BOND_INDEX, MAX_SATS, alice).type).toBe("ok");
+  });
+
+  it("cannot stop members getting their money back", () => {
+    // whatever happens to the seat, every path out of the pool is open to
+    // anyone: staking, unwinding, syncing and both claims take no operator
+    updateOperator(alice, true);
+    expect(updateOperator(deployer, false, alice).type).toBe("ok");
+
+    deposit(bob, BOB_SATS);
+    const bondStart = Number(boundBond()["start-height"]);
+    advanceToBurnHeight(bondStart - 288);
+    expect(stake(carol).type).toBe("ok"); // carol is nobody
+
+    const unlockHeight = Number(epoch(0)["unlock-burn-height"]);
+    advanceToBurnHeight(unlockHeight);
+    expect(unstakeSbtc(carol).type).toBe("ok");
+    expect(claimPrincipal(bob, carol).type).toBe("ok");
+  });
+});
+

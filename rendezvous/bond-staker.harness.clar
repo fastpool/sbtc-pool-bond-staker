@@ -62,8 +62,13 @@
     (asserts! (not (can-still-stake)) ERR_BOND_ALREADY_BOUND)
     (if (is-eq (var-get epoch-count) u0)
       (begin
-        (var-set signer-manager DEPLOYER)
-        (var-set operator DEPLOYER)
+        ;; Any deployed contract will do -- the harness never calls it -- but it
+        ;; has to be a contract, since that is what the trust list keys on.
+        (map-set operators DEPLOYER true)
+        (var-set signer-manager .bond-treasury)
+        (map-set trusted-signers
+          (unwrap-panic (contract-hash? .bond-treasury)) u0
+        )
         (var-set initialized true)
         (var-set pending-stx-value-ratio (+ u1 (mod ratio u1000000)))
         (var-set pending-min-ustx-ratio (+ u1 (mod bips u10000)))
@@ -74,6 +79,8 @@
     (var-set pending-max-sats (+ u1000000 (mod allocation-sats u100000000000)))
     (var-set pending-start-height start)
     (var-set pending-unlock-height (+ start u3000))
+    ;; The notice runs from here, same as `bind-bond`.
+    (var-set bound-at-height burn-block-height)
     (var-set bond-bound true)
     (ok true)
   )
@@ -97,6 +104,9 @@
     (asserts! (> sats u0) ERR_INSUFFICIENT_STX)
     (asserts! (>= burn-block-height (stake-window-start)) ERR_TOO_EARLY)
     (asserts! (< burn-block-height (var-get pending-start-height)) ERR_TOO_LATE)
+    (asserts! (>= burn-block-height (+ (var-get bound-at-height) BIND_NOTICE))
+      ERR_TOO_EARLY
+    )
 
     (if (> sats custodied)
       (begin
@@ -373,6 +383,21 @@
       (< (get settled-epoch record) (var-get epoch-count))
     )
     true
+  )
+)
+
+;; The pool is always pointed at a contract, never a bare account -- the trust
+;; list keys on code hashes, and only a contract has one.
+;;
+;; Note what is *not* asserted: that the current manager is still trusted.
+;; Distrusting takes effect at once and deliberately does not unwind a move
+;; already made, so a manager can outlive its entry on the list. That the
+;; operator can only ever *move onto* a trusted one is a property of the
+;; transition rather than of the state, and is covered by the unit tests.
+(define-read-only (invariant-signer-manager-is-a-contract)
+  (or
+    (is-eq (var-get epoch-count) u0)
+    (is-ok (contract-hash? (var-get signer-manager)))
   )
 )
 

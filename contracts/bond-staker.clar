@@ -177,6 +177,9 @@
 (define-constant ERR_ALREADY_EXITING (err u123))
 (define-constant ERR_UNKNOWN_EPOCH (err u124))
 (define-constant ERR_QUEUE_PENDING (err u125))
+(define-constant ERR_SIGNER_NOT_TRUSTED (err u126))
+(define-constant ERR_ALREADY_TRUSTED (err u127))
+(define-constant ERR_NOT_A_CONTRACT (err u128))
 
 ;;; Protocol constants -- these mirror pox-5 and are not deployment knobs
 
@@ -187,6 +190,16 @@
 ;; bond every 2 cycles, so bond N + 6 is the first one whose term starts
 ;; exactly where bond N's ends.
 (define-constant NEXT_BOND_OFFSET u6)
+
+;; How much notice the members get of a bond the operator has bound, in burn
+;; blocks. `stake` will not run until it has passed, so nobody is carried into
+;; a bond they had no chance to read the terms of and `request-exit` from.
+;;
+;; ~4 days. It has to fit inside the window pox-5 allows for `setup-bond` --
+;; two cycles before the bond starts -- with the STAKE_WINDOW still to come
+;; after it, which it does on both mainnet (2100-block cycles) and testnet
+;; (900).
+(define-constant BIND_NOTICE u576)
 
 ;; How long before the bond starts `stake` may be called, in burn blocks.
 ;; ~2 days: long enough to get the transaction mined, short enough that
@@ -213,17 +226,46 @@
 
 (define-data-var initialized bool false)
 
-;; Binds each bond and may move the pool to another signer manager. Has no
-;; access to deposits, and cannot keep the pool from winding down: `stake` and
-;; `unstake-sbtc` are both permissionless.
-(define-data-var operator principal tx-sender)
+;; Who may bind bonds and move the pool between vetted signer managers. No
+;; access to deposits, and no way to keep the pool from winding down: `stake`
+;; and `unstake-sbtc` are both permissionless.
+;;
+;; A set rather than a single principal, so the seat can be rotated without a
+;; gap and handed over without trusting a single key to stay uncompromised.
+(define-map operators
+  principal
+  bool
+)
 
 ;; The signer manager the pool stakes through. `stake` only accepts this one.
 (define-data-var signer-manager principal tx-sender)
 
+;; Code hashes of the signer managers the pool may be moved onto, each stamped
+;; with the pool's epoch count at the moment it was added.
+;;
+;; The operator picks the signer, and the signer is where rewards flow: pox-5
+;; pays the manager, which pays the pool. A manager that simply never pays out
+;; costs the members a bond's rewards. So the operator cannot name one freely --
+;; only a contract whose code hash is on this list, vetted in advance.
+;;
+;; A hash added during an epoch cannot be used until the pool has rolled out of
+;; that epoch. That is not an arbitrary delay: the roll is the *only* moment a
+;; member can leave, so pinning adoption to it is what makes the notice worth
+;; anything. A hash that was already on the list when the epoch was staked can
+;; be moved onto at once, which is what leaves an emergency switch available.
+;;
+;; Removing a hash takes effect immediately, because removing is the safe
+;; direction. It does not unwind a move already made.
+(define-map trusted-signers
+  (buff 32)
+  uint
+)
+
 ;;; The bound bond -- the one the next `stake` will commit to
 
 (define-data-var bond-bound bool false)
+;; When the bond was bound. `stake` waits BIND_NOTICE blocks past it.
+(define-data-var bound-at-height uint u0)
 (define-data-var pending-bond-index uint u0)
 (define-data-var pending-max-sats uint u0)
 ;; `stx-value-ratio` is uSTX per 100 sats, `min-ustx-ratio` is in bips.
@@ -353,11 +395,42 @@
 (define-read-only (get-config)
   {
     initialized: (var-get initialized),
-    operator: (var-get operator),
     signer-manager: (var-get signer-manager),
     epoch-count: (var-get epoch-count),
     finished: (var-get finished),
   }
+)
+
+;; Whether `who` may bind bonds and move the pool between vetted managers.
+(define-read-only (is-operator (who principal))
+  (default-to false (map-get? operators who))
+)
+
+;; The code hash of a deployed contract -- what `trust-signer-manager` takes.
+;; Read it here rather than working it out off chain, so what is vetted and
+;; what is committed to are the same bytes.
+(define-read-only (get-signer-manager-hash (manager principal))
+  (contract-hash? manager)
+)
+
+;; The cycle from which a signer manager with this code hash may be used, if it
+;; is trusted at all.
+(define-read-only (get-trusted-signer (code-hash (buff 32)))
+  (map-get? trusted-signers code-hash)
+)
+
+;; Whether the operator could move the pool onto `manager` right now.
+(define-read-only (can-use-signer-manager (manager principal))
+  (match (contract-hash? manager)
+    code-hash (match (map-get? trusted-signers code-hash)
+      ;; Trusted while epoch `trusted-at - 1` was live; usable once the pool
+      ;; has opened a later one.
+      trusted-at
+      (> (var-get epoch-count) trusted-at)
+      false
+    )
+    error false
+  )
 )
 
 (define-read-only (get-bound-bond)
@@ -371,6 +444,8 @@
     unlock-burn-height: (var-get pending-unlock-height),
     stake-opens-at: (stake-window-start),
     stakeable: (can-still-stake),
+    bound-at-height: (var-get bound-at-height),
+    notice-ends-at: (+ (var-get bound-at-height) BIND_NOTICE),
   }
 )
 
@@ -710,8 +785,12 @@
       ))
       ERR_SIGNER_NOT_REGISTERED
     )
+    ;; Nobody has deposited yet, so the first choice needs no notice period.
+    (map-set trusted-signers
+      (unwrap! (contract-hash? manager) ERR_NOT_A_CONTRACT) u0
+    )
     (var-set signer-manager manager)
-    (var-set operator pool-operator)
+    (map-set operators pool-operator true)
     (var-set initialized true)
     (print (merge { topic: "initialize" } (get-config)))
     (ok (get-config))
@@ -732,56 +811,59 @@
     (index uint)
     (allocation-sats uint)
   )
-  (let (
-      (bond (unwrap!
-        (contract-call? 'ST000000000000000000002AMW42H.pox-5 get-protocol-bond
-          index
-        )
-        ERR_BOND_NOT_FOUND
-      ))
-      (allowance (unwrap!
-        (contract-call? 'ST000000000000000000002AMW42H.pox-5 get-bond-allowance
-          index current-contract
-        )
-        ERR_NOT_ALLOWLISTED
-      ))
-      (start-height (contract-call? 'ST000000000000000000002AMW42H.pox-5
-        bond-period-to-burn-height index
-      ))
-      (start-cycle (contract-call? 'ST000000000000000000002AMW42H.pox-5
-        bond-period-to-reward-cycle index
-      ))
-      (unlock-height (contract-call? 'ST000000000000000000002AMW42H.pox-5
-        reward-cycle-to-burn-height (+ start-cycle BOND_LENGTH_CYCLES)
-      ))
-    )
-    (asserts! (var-get initialized) ERR_NOT_INITIALIZED)
-    (asserts! (is-eq tx-sender (var-get operator)) ERR_UNAUTHORIZED)
-    (asserts! (not (var-get finished)) ERR_ALREADY_UNSTAKED)
-    (asserts! (not (can-still-stake)) ERR_BOND_ALREADY_BOUND)
-    (asserts! (> allocation-sats u0) ERR_INVALID_AMOUNT)
-    ;; Never advertise more room than pox-5 will let the pool bond.
-    (asserts! (<= allocation-sats allowance) ERR_ALLOCATION_EXCEEDED)
-    ;; Deposits would be pointless: the bond can no longer be joined.
-    (asserts! (< burn-block-height start-height) ERR_TOO_LATE)
-    (asserts!
-      (match (get-live-epoch)
-        live (>= index (+ (get bond-index live) NEXT_BOND_OFFSET))
-        true
+  (begin
+    (try! (authorize-operator))
+    (let (
+        (bond (unwrap!
+          (contract-call? 'ST000000000000000000002AMW42H.pox-5 get-protocol-bond
+            index
+          )
+          ERR_BOND_NOT_FOUND
+        ))
+        (allowance (unwrap!
+          (contract-call? 'ST000000000000000000002AMW42H.pox-5 get-bond-allowance
+            index current-contract
+          )
+          ERR_NOT_ALLOWLISTED
+        ))
+        (start-height (contract-call? 'ST000000000000000000002AMW42H.pox-5
+          bond-period-to-burn-height index
+        ))
+        (start-cycle (contract-call? 'ST000000000000000000002AMW42H.pox-5
+          bond-period-to-reward-cycle index
+        ))
+        (unlock-height (contract-call? 'ST000000000000000000002AMW42H.pox-5
+          reward-cycle-to-burn-height (+ start-cycle BOND_LENGTH_CYCLES)
+        ))
       )
-      ERR_INVALID_BOND_INDEX
+      (asserts! (var-get initialized) ERR_NOT_INITIALIZED)
+      (asserts! (not (var-get finished)) ERR_ALREADY_UNSTAKED)
+      (asserts! (not (can-still-stake)) ERR_BOND_ALREADY_BOUND)
+      (asserts! (> allocation-sats u0) ERR_INVALID_AMOUNT)
+      ;; Never advertise more room than pox-5 will let the pool bond.
+      (asserts! (<= allocation-sats allowance) ERR_ALLOCATION_EXCEEDED)
+      ;; Deposits would be pointless: the bond can no longer be joined.
+      (asserts! (< burn-block-height start-height) ERR_TOO_LATE)
+      (asserts!
+        (match (get-live-epoch)
+          live (>= index (+ (get bond-index live) NEXT_BOND_OFFSET))
+          true
+        )
+        ERR_INVALID_BOND_INDEX
+      )
+
+      (var-set pending-bond-index index)
+      (var-set pending-max-sats allocation-sats)
+      (var-set pending-stx-value-ratio (get stx-value-ratio bond))
+      (var-set pending-min-ustx-ratio (get min-ustx-ratio bond))
+      (var-set pending-start-height start-height)
+      (var-set pending-unlock-height unlock-height)
+      (var-set bound-at-height burn-block-height)
+      (var-set bond-bound true)
+
+      (print (merge { topic: "bind-bond" } (get-bound-bond)))
+      (ok (get-bound-bond))
     )
-
-    (var-set pending-bond-index index)
-    (var-set pending-max-sats allocation-sats)
-    (var-set pending-stx-value-ratio (get stx-value-ratio bond))
-    (var-set pending-min-ustx-ratio (get min-ustx-ratio bond))
-    (var-set pending-start-height start-height)
-    (var-set pending-unlock-height unlock-height)
-    (var-set bond-bound true)
-
-    (print (merge { topic: "bind-bond" } (get-bound-bond)))
-    (ok (get-bound-bond))
   )
 )
 
@@ -912,6 +994,12 @@
     (asserts! (> sats u0) ERR_INSUFFICIENT_STX)
     (asserts! (>= burn-block-height (stake-window-start)) ERR_TOO_EARLY)
     (asserts! (< burn-block-height (var-get pending-start-height)) ERR_TOO_LATE)
+    ;; The members' notice on this bond has to have run out too, so nobody is
+    ;; carried into terms they had no chance to read and leave over. Checked
+    ;; after the window so a bond that has simply started reads as TOO_LATE.
+    (asserts! (>= burn-block-height (+ (var-get bound-at-height) BIND_NOTICE))
+      ERR_TOO_EARLY
+    )
 
     ;; pox-5 moves only the difference between what it already holds for this
     ;; staker and what the new bond needs, so top the contract up first when
@@ -1048,11 +1136,15 @@
     (old-manager <signer-manager-trait>)
   )
   (begin
-    (asserts! (is-eq tx-sender (var-get operator)) ERR_UNAUTHORIZED)
+    (try! (authorize-operator))
     (asserts! (is-some (get-live-epoch)) ERR_NOT_STAKED)
     (asserts! (not (var-get finished)) ERR_ALREADY_UNSTAKED)
     (asserts! (is-eq (contract-of old-manager) (var-get signer-manager))
       ERR_INVALID_SIGNER_MANAGER
+    )
+    ;; Vetted in advance, and past its notice period.
+    (asserts! (can-use-signer-manager (contract-of manager))
+      ERR_SIGNER_NOT_TRUSTED
     )
 
     (var-set signer-manager (contract-of manager))
@@ -1067,6 +1159,76 @@
       (print (merge { topic: "update-bond-registration" } result))
       (ok result)
     )
+  )
+)
+
+;;; Who the operator is
+
+;; Add or remove an operator. Follows the signer manager's convention, down to
+;; refusing to change your own entry: rotating the seat therefore always takes
+;; two live operators, and no single key can lock itself out or lock everyone
+;; else out.
+;;
+;; Handing over is: the sitting operator enables the newcomer, the newcomer
+;; disables the sitting one. Winding the role down for good is the same move
+;; with nobody enabled at the end -- after which the pool finishes its bond and
+;; `unstake-sbtc`, which needs no operator, ends it.
+(define-public (update-operator
+    (who principal)
+    (enabled bool)
+  )
+  (begin
+    (try! (authorize-operator))
+    (asserts! (not (is-eq tx-sender who)) ERR_UNAUTHORIZED)
+    (map-set operators who enabled)
+    (print {
+      topic: "update-operator",
+      operator: who,
+      enabled: enabled,
+    })
+    (ok who)
+  )
+)
+
+;;; The signer managers the operator may choose from
+
+;; Put a signer manager's code hash on the list. Usable once the pool has rolled
+;; into its next bond -- the one moment a member who would rather not be behind
+;; it can be gone.
+;;
+;; Takes a hash rather than a principal so a contract can be vetted, and
+;; committed to, before it is deployed.
+(define-public (trust-signer-manager (code-hash (buff 32)))
+  (let ((trusted-at (var-get epoch-count)))
+    (try! (authorize-operator))
+    ;; Re-adding must not quietly restart the clock on a hash already pending.
+    (asserts! (map-insert trusted-signers code-hash trusted-at)
+      ERR_ALREADY_TRUSTED
+    )
+    (let ((result {
+        code-hash: code-hash,
+        trusted-at: trusted-at,
+        usable-from-epoch: (+ trusted-at u1),
+      }))
+      (print (merge { topic: "trust-signer-manager" } result))
+      (ok result)
+    )
+  )
+)
+
+;; Take a signer manager's code hash off the list, at once. No delay: this only
+;; ever narrows what the operator can do, and waiting would be the wrong side to
+;; err on. It does not unwind a move already made -- for that the pool rolls, or
+;; winds down.
+(define-public (distrust-signer-manager (code-hash (buff 32)))
+  (begin
+    (try! (authorize-operator))
+    (asserts! (map-delete trusted-signers code-hash) ERR_SIGNER_NOT_TRUSTED)
+    (print {
+      topic: "distrust-signer-manager",
+      code-hash: code-hash,
+    })
+    (ok true)
   )
 )
 
@@ -1275,6 +1437,10 @@
 ;; the only caller these five accept, and none of them can be reached any other
 ;; way.
 
+(define-private (authorize-operator)
+  (ok (asserts! (is-operator tx-sender) ERR_UNAUTHORIZED))
+)
+
 (define-private (authorize-bridge)
   (ok (asserts! (is-eq contract-caller .bond-bridge) ERR_UNAUTHORIZED))
 )
@@ -1379,7 +1545,7 @@
 ;; the balance *above* everything owed.
 (define-public (sweep-unattributed-principal (recipient principal))
   (let ((amount (get-unattributed-principal)))
-    (asserts! (is-eq tx-sender (var-get operator)) ERR_UNAUTHORIZED)
+    (try! (authorize-operator))
     (asserts! (> amount u0) ERR_NOTHING_TO_CLAIM)
     (try! (contract-call? .bond-treasury payout amount recipient))
     (print {

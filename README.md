@@ -200,6 +200,51 @@ testnet-encoded boot address. Nothing else changes between networks — cycle
 lengths, bond start heights and the bond's pricing are all read from pox-5 at
 run time, and testnet's are 900-block cycles rather than simnet's 1050.
 
+## Trusting the operator with as little as possible
+
+The operator binds each bond and picks the signer manager. It never touches
+deposits, and it cannot stall the pool: `stake`, `unstake-sbtc`, `sync-rewards`
+and both claims are permissionless, so members can always get out without it.
+
+The sharp edge is the signer manager, because that is where rewards flow —
+pox-5 pays the manager, the manager pays the pool. A manager that simply never
+pays costs the members a bond's rewards. So the operator cannot name one
+freely:
+
+| call | who | when it takes effect |
+| --- | --- | --- |
+| `trust-signer-manager(code-hash)` | operator | once the pool rolls into its next bond |
+| `distrust-signer-manager(code-hash)` | operator | at once |
+| `update-bond-registration(new, old)` | operator | only onto a hash trusted before the live epoch was staked |
+| `update-operator(who, enabled)` | operator | at once, but never on your own entry |
+
+Adoption is pinned to the **roll**, not to a number of blocks, because the roll
+is the only moment a member can leave. A delay measured in cycles would give
+notice a member could not act on: `request-exit` is honoured at the next roll,
+which may be six months out. A hash that was already on the list when the epoch
+was staked can be moved onto at once — that is the emergency switch, for a
+manager that stops signing.
+
+`bind-bond` carries the same idea: `stake` will not run until `BIND_NOTICE`
+(576 burn blocks, ~4 days) has passed since the bond was bound, so nobody is
+carried into terms they had no chance to read and exit over. Bind too late and
+the bond simply cannot be staked — deposits stay withdrawable and the operator
+binds the next one along.
+
+The operator is a set with an enabled flag, following the signer manager's
+convention down to refusing to change your own entry. Handing over is two
+moves: the sitting operator enables the newcomer, the newcomer retires the old
+key. No single key can lock itself out, or lock everyone else out.
+
+`get-signer-manager-hash(principal)` reads the hash off chain state, so what is
+vetted and what is committed to are the same bytes. `trust-signer-manager`
+takes a hash rather than a principal, so a contract can be vetted before it is
+deployed. The manager chosen at `initialize` is trusted from cycle 0 — nobody
+has deposited yet, so there is nothing to give notice about.
+
+Adding is slow and removing is instant, which is the right way round: removal
+only ever narrows what the operator can do.
+
 ## Deploying
 
     pnpm run build:testnet

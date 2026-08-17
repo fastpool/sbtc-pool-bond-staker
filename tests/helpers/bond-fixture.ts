@@ -250,6 +250,50 @@ export const updateBondRegistration = (
     who,
   ).result;
 
+export const signerHash = (contractId: string) =>
+  plain(readPool("get-signer-manager-hash", [Cl.principal(contractId)])) as string;
+
+export const updateOperator = (
+  who: string,
+  enabled: boolean,
+  sender: string = deployer,
+) =>
+  simnet.callPublicFn(
+    POOL,
+    "update-operator",
+    [Cl.principal(who), Cl.bool(enabled)],
+    sender,
+  ).result;
+
+export const isOperator = (who: string) =>
+  plain(readPool("is-operator", [Cl.principal(who)])) === true;
+
+export const trustSigner = (codeHash: string, who: string = deployer) =>
+  simnet.callPublicFn(
+    POOL,
+    "trust-signer-manager",
+    [Cl.bufferFromHex(codeHash.replace(/^0x/, ""))],
+    who,
+  ).result;
+
+export const distrustSigner = (codeHash: string, who: string = deployer) =>
+  simnet.callPublicFn(
+    POOL,
+    "distrust-signer-manager",
+    [Cl.bufferFromHex(codeHash.replace(/^0x/, ""))],
+    who,
+  ).result;
+
+export const canUseSigner = (contractId: string) =>
+  plain(readPool("can-use-signer-manager", [Cl.principal(contractId)])) === true;
+
+export const trustedSigner = (codeHash: string) =>
+  plain(
+    readPool("get-trusted-signer", [
+      Cl.bufferFromHex(codeHash.replace(/^0x/, "")),
+    ]),
+  );
+
 export const requestExit = (who: string) =>
   simnet.callPublicFn(POOL, "request-exit", [], who).result;
 
