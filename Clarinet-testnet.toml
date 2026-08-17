@@ -1,0 +1,42 @@
+# Manifest for deploying to testnet.
+#
+# Points at build/testnet/, whose sBTC and pox-5 addresses have been rewritten
+# for the network by `pnpm run build:testnet`. Regenerate that first; deploying
+# the sources in contracts/ would point every sBTC call at a contract that does
+# not exist on testnet.
+#
+#   pnpm run build:testnet
+#   clarinet deployments generate --testnet --manifest-path Clarinet-testnet.toml --medium-cost
+#   clarinet deployments apply    --testnet --manifest-path Clarinet-testnet.toml
+#
+[project]
+name = "sbtc-pool-bond-staker"
+description = "Pooled sBTC + STX staker for pox-5 Bitcoin Staking Bonds"
+authors = []
+telemetry = false
+cache_dir = "./.cache"
+
+[repl.analysis]
+passes = ["check_checker"]
+check_checker = { trusted_sender = false, trusted_caller = false, callee_filter = false }
+
+[contracts]
+
+# Holds the pooled sBTC principal. Must be deployed before `bond-staker`,
+# which calls it; its own reference back is only a principal value.
+[contracts.bond-treasury]
+path = "build/testnet/bond-treasury.clar"
+clarity_version = 6
+epoch = "4.0"
+
+[contracts.bond-staker]
+path = "build/testnet/bond-staker.clar"
+clarity_version = 6
+epoch = "4.0"
+
+# The L1 on- and off-ramp. Deployed last: it calls the two above, and neither
+# calls it.
+[contracts.bond-bridge]
+path = "build/testnet/bond-bridge.clar"
+clarity_version = 6
+epoch = "4.0"

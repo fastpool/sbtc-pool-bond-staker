@@ -174,18 +174,64 @@ watch the pool, claim, leave. See [ui/README.md](ui/README.md).
 
 ## Networks
 
-The sBTC protocol sits at the same hash on every network but a different
-version byte, and a Clarity `contract-call?` target is a literal, so the
-contracts are network-specific text:
+Two protocol addresses are baked into the source, because a Clarity
+`contract-call?` target is fixed at deploy time and cannot be configured:
 
-    testnet   SN3VMHXEN64ZZF71JQ5VESXDWTR301XTTXGF4J8F1
-    mainnet   SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4
+| | mainnet | testnet |
+| --- | --- | --- |
+| sBTC | `SM3VDXK3…` | `SN3VMHXE…` (same hash, other version byte) |
+| pox-5 | `SP000000000000000000002Q6VF78` | `ST000000000000000000002AMW42H` |
 
-`contracts/` holds the mainnet form, which is what the tests run against, since
-simnet mirrors mainnet's sBTC deployment. `pnpm run build:testnet` writes the
-testnet flavour to `build/testnet/`. Nothing else changes: cycle lengths, bond
-start heights and the bond's pricing are all read from pox-5 at run time, and
-testnet's differ from simnet's (900-block cycles rather than 1050).
+Both are plain literals at every call site, and the build script rewrites them:
+
+    pnpm run build:testnet     # -> build/testnet/
+    pnpm run build:mainnet     # -> build/mainnet/
+
+A `define-constant` would have worked for the calls made from public and
+private functions — but *a read-only function may not call through a constant*,
+and half the read-only API here reaches pox-5 for reward-cycle arithmetic.
+Splitting the source between two mechanisms bought nothing, so everything is a
+literal. The script fails rather than emit a build with an address left on the
+wrong network.
+
+`contracts/` holds the simnet flavour, which is what the tests run against:
+mainnet-encoded sBTC, since simnet mirrors mainnet's deployment, and the
+testnet-encoded boot address. Nothing else changes between networks — cycle
+lengths, bond start heights and the bond's pricing are all read from pox-5 at
+run time, and testnet's are 900-block cycles rather than simnet's 1050.
+
+## Deploying
+
+    pnpm run build:testnet
+    pnpm run plan:testnet ST3YOUR…DEPLOYER      # -> deployments/testnet-plan.yaml
+    clarinet deployments apply --testnet \
+      --manifest-path Clarinet-testnet.toml \
+      --deployment-plan-path deployments/testnet-plan.yaml
+
+Needs a funded seed phrase in `settings/Testnet.toml` (gitignored;
+`clarinet deployments encrypt` keeps it out of plaintext).
+
+`deployments/testnet-plan.yaml` is checked in as a template with `<DEPLOYER>`
+placeholders, so the syntax is there to read before you have an address;
+regenerating overwrites it in place (`--template` puts it back).
+
+The plan is two batches: publish `bond-treasury`, `bond-staker`, `bond-bridge`,
+then call `initialize` once those are confirmed. The deployer address is a
+required argument because it appears in six places and `initialize` only
+accepts the contract's own deployer — a half-substituted plan would deploy
+under one identity and initialize under another. Publish fees are sized from
+the contract bytes at the fee rate in `settings/Testnet.toml`.
+
+`initialize` binds the pool to a signer manager, which must already be
+registered with pox-5. The default is
+`ST1B38CGQRPXEMRH7B66VXTS22DQTNMSW4YJJ7QK1.signer-manager` — of the three in
+testnet's signer set it has the largest delegation and stays in through cycle
+10. Pass a different one as the second argument if that changes.
+
+Deploying gets you an address, not a working pool: `bind-bond` returns
+`ERR_NOT_ALLOWLISTED (u104)` until the bond admin names this contract in a
+`setup-bond`, and pox-5 only writes allowances there, so it has to be a bond
+that has not been created yet.
 
 ## Tests
 

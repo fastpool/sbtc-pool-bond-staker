@@ -1,0 +1,51 @@
+# TEMPLATE -- regenerate with your own address before applying:
+#
+#     pnpm run build:testnet
+#     pnpm run plan:testnet ST3YOUR…DEPLOYER
+#
+# Every <DEPLOYER> below has to be the account that publishes the contracts:
+# `initialize` only accepts the pool's own deployer, so publishing under one
+# identity and initializing under another leaves the pool unusable.
+---
+id: 0
+name: Testnet deployment
+network: testnet
+stacks-node: "https://api.testnet.hiro.so"
+bitcoin-node: "http://blockstack:blockstacksystem@bitcoind.testnet.stacks.co:18332"
+plan:
+  batches:
+  - id: 0
+    transactions:
+    - transaction-type: contract-publish
+      contract-name: bond-treasury
+      expected-sender: <DEPLOYER>
+      cost: 50000
+      path: build/testnet/bond-treasury.clar
+      clarity-version: 6
+    - transaction-type: contract-publish
+      contract-name: bond-staker
+      expected-sender: <DEPLOYER>
+      cost: 644090
+      path: build/testnet/bond-staker.clar
+      clarity-version: 6
+    - transaction-type: contract-publish
+      contract-name: bond-bridge
+      expected-sender: <DEPLOYER>
+      cost: 120630
+      path: build/testnet/bond-bridge.clar
+      clarity-version: 6
+    epoch: '4.0'
+  - id: 1
+    transactions:
+    # Binds the pool to its signer manager and names its operator. Only the
+    # contract's own deployer may call it, and only once. A separate batch so
+    # the publishes above are confirmed first.
+    - transaction-type: contract-call
+      contract-id: <DEPLOYER>.bond-staker
+      expected-sender: <DEPLOYER>
+      method: initialize
+      parameters:
+        - "'ST1B38CGQRPXEMRH7B66VXTS22DQTNMSW4YJJ7QK1.signer-manager"
+        - "'<DEPLOYER>"
+      cost: 50000
+    epoch: '4.0'

@@ -27,11 +27,13 @@
 ;; the sBTC bridge on its way to bitcoin.
 (define-constant BRIDGE .bond-bridge)
 
-(define-constant SBTC 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token)
-(define-constant SBTC_WITHDRAWAL 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-withdrawal)
 ;; The pooled principal.
-(define-public (get-balance)
-  (contract-call? SBTC get-balance current-contract)
+(define-read-only (get-balance)
+  (unwrap-panic
+    (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
+      get-balance current-contract
+    )
+  )
 )
 
 (define-read-only (get-controller)
@@ -51,8 +53,8 @@
   )
   (begin
     (asserts! (is-eq contract-caller CONTROLLER) ERR_UNAUTHORIZED)
-    (try! (as-contract? ((with-ft SBTC "sbtc-token" amount))
-      (try! (contract-call? SBTC transfer amount tx-sender recipient none))
+    (try! (as-contract? ((with-ft 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token "sbtc-token" amount))
+      (try! (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token transfer amount tx-sender recipient none))
     ))
     (print {
       topic: "payout",
@@ -88,8 +90,8 @@
         ;; The bridge locks the sBTC in place rather than moving it out, and
         ;; may unlock it again later; either way nothing leaves this contract
         ;; until the signers sweep it.
-        ((with-ft SBTC "sbtc-token" (+ amount max-fee)))
-        (try! (contract-call? SBTC_WITHDRAWAL initiate-withdrawal-request amount
+        ((with-ft 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token "sbtc-token" (+ amount max-fee)))
+        (try! (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-withdrawal initiate-withdrawal-request amount
           recipient max-fee
         ))
       ))))

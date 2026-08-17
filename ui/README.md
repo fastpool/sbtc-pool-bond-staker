@@ -62,4 +62,4 @@ only place STX exists.
 
 The *contracts* have the same split, and it is not something the page can fix:
 a `contract-call?` target is a literal. Build the flavour you are deploying
-with `node scripts/build-network.mjs testnet`, which writes `build/testnet/`.
+with `pnpm run build:testnet`, which writes `build/testnet/`.
