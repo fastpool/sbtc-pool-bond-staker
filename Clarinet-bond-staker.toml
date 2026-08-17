@@ -1,0 +1,46 @@
+# Manifest used only by the Rendezvous fuzzer.
+#
+# `rv` picks up `Clarinet-<contract-name>.toml` when it exists, so
+# `npx rv . bond-staker invariant` runs against this manifest instead of
+# Clarinet.toml. It deploys the generated harness -- the production contract
+# plus the invariants and pox-5 stand-ins -- under the name `bond-staker`,
+# alongside the `bond-escrow` contract that stands in for pox-5's custody.
+#
+# Regenerate the harness with `npm run fuzz:build` after changing the contract.
+
+[project]
+name = "fastpool-pox-5"
+description = "Rendezvous harness"
+authors = []
+telemetry = false
+cache_dir = "./.cache"
+requirements = [
+    {contract_id = 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-withdrawal'},
+    {contract_id = 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-deposit'}
+]
+
+[repl.analysis]
+passes = ["check_checker"]
+check_checker = { trusted_sender = false, trusted_caller = false, callee_filter = false }
+
+[contracts]
+
+[contracts.fastpool-signer-manager]
+path = "../fastpool-pox-5/contracts/fastpool-signer-manager.clar"
+clarity_version = 6
+epoch = "4.0"
+
+[contracts.bond-treasury]
+path = "contracts/bond-treasury.clar"
+clarity_version = 6
+epoch = "4.0"
+
+[contracts.bond-escrow]
+path = "rendezvous/bond-escrow.clar"
+clarity_version = 6
+epoch = "4.0"
+
+[contracts.bond-staker]
+path = "rendezvous/harnesses/bond-staker.clar"
+clarity_version = 6
+epoch = "4.0"

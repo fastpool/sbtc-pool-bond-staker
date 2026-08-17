@@ -1,0 +1,1271 @@
+;; Bitcoin Staking Bond staker
+;;
+;; A pooled staker for pox-5 protocol bonds. The contract is the pox-5
+;; *staker*: it is the principal that appears on a bond's allowlist, the
+;; principal whose sBTC pox-5 custodies for the bond term, and the principal
+;; whose STX pox-5 locks. Depositors hold a claim on this contract, not on
+;; pox-5.
+;;
+;; Epochs
+;;
+;; The pool lives through a sequence of bonds. Each bond it stakes into is an
+;; *epoch*: a frozen record of which bond, when it started and ends, how many
+;; shares were committed to it, and its own reward pot. Epoch 0 is the pool's
+;; first bond; every later epoch is a roll-over out of the one before it.
+;;
+;; pox-5 makes rolling seamless: bond N's term ends at exactly the cycle bond
+;; N+6 begins, and `register-for-bond` on the new bond while still a member of
+;; the old one moves only the *net difference* in sBTC and resizes the STX
+;; lock in place. So a roll neither unwinds nor re-funds the position -- it
+;; adds the new deposits, releases the leavers, and carries the rest across
+;; untouched.
+;;
+;; Three quantities per member
+;;
+;;   sats    the sBTC they deposited     -- what they get back
+;;   ustx    the STX they deposited      -- what they get back
+;;   shares  their weight in an epoch    -- what their rewards are split by
+;;
+;; Shares are struck when a bond is staked or rolled, and one share is one
+;; committed satoshi, mirroring how pox-5 itself weights bond rewards. They
+;; are held separately from the deposit rather than derived from it because
+;; the two come apart: a member who has left keeps their shares in the epoch
+;; they were part of -- and so keeps earning that bond's rewards as they
+;; arrive -- while their sats and STX are already claimable.
+;;
+;; Where the money sits
+;;
+;; The pooled principal lives in `bond-treasury` whenever pox-5 does not have
+;; custody of it: the treasury's balance is exactly the queued deposits plus
+;; the principal released to members who have left. The consequence is that
+;; any sBTC *this* contract holds is reward. There is no principal to net off
+;; before splitting a payout, and no way for the two to be confused. The STX
+;; leg is the exception -- pox-5 locks the *staker's* STX, so it is held here.
+;;
+;; Which epoch a reward belongs to
+;;
+;; Rewards arrive as a bare sBTC transfer, so the pool dates them by the clock
+;; rather than by their contents. pox-5 settles a reward cycle only once that
+;; cycle has ended, so a bond's final cycle pays out *after* the roll that
+;; replaced it. An epoch therefore stays open for rewards until the epoch
+;; after it has a full reward cycle behind it, and `sync-rewards` always
+;; credits the oldest open epoch. At most two epochs are open at once, and the
+;; latest epoch never closes, so a late payment is never stranded.
+;;
+;; The STX/sBTC split
+;;
+;; pox-5 requires a bond participant to lock STX worth `min-ustx-ratio` of the
+;; sats they bond (`min-ustx-for-sats-amount`). For the genesis bond that
+;; ratio is 500 bips, i.e. the STX leg is 5% of the value of the sBTC leg -- a
+;; deposit of 95.24% sBTC / 4.76% STX by value. `get-required-ustx` derives
+;; the STX leg from the *bound* bond's parameters, so a deposit is always
+;; priced for the bond it is queued for. The per-deposit STX is rounded up, so
+;; the pooled sum is never below pox-5's requirement for the pooled sats.
+;;
+;; Naming
+;;
+;; Each function that reaches into pox-5 carries pox-5's own name for what it
+;; does there, so the two APIs read the same way:
+;;
+;;   stake                    -> pox-5.register-for-bond
+;;   unstake-sbtc             -> pox-5.unstake-sbtc
+;;   update-bond-registration -> pox-5.update-bond-registration
+;;
+;; Note that pox-5's `unstake` and `stake-update` are *not* the counterparts
+;; of the first two: they act on `staker-info`, which only STX-only staking
+;; creates, and a bond position never has one.
+;;
+;; Lifecycle
+;;
+;;   initialize    deployer, once: the signer manager and the operator.
+;;   bind-bond     operator, once per bond, after the bond admin has run
+;;                 `setup-bond` and allowlisted this contract. Bond parameters
+;;                 are read from pox-5 rather than supplied. Opens deposits.
+;;   deposit       anyone, while a bond is bound and has not started.
+;;   withdraw      anyone, for their own queued deposit, until it is staked.
+;;   stake         permissionless, inside a window of STAKE_WINDOW burn blocks
+;;                 before the bound bond starts. The first call opens epoch 0;
+;;                 every later call rolls the position into the next bond.
+;;   request-exit  a member, to be released at the next roll.
+;;   unstake-sbtc  permissionless, once the live bond's 12 cycles have
+;;                 elapsed. Winds the pool down for good.
+;;   claim-*       anyone, on behalf of any member: rewards as they settle,
+;;                 principal once that member's position has ended.
+;;
+;; Redeploying for a new bond
+;;
+;; Nothing about a specific bond is baked into this source: a bond's rate,
+;; ratio, start height, unlock height and this contract's sats allowance are
+;; all read from pox-5 at `bind-bond`. The genesis bond starts at bitcoin
+;; block 966,350 in reward cycle 143, with a deliberately limited capacity
+;; handed out to pre-approved participants:
+;; https://www.stacks.co/blog/the-genesis-bond-starts-at-bitcoin-block-966-350
+;;
+;; That allowlist is the one precondition this contract cannot arrange for
+;; itself: the bond admin must have called `setup-bond` naming this contract
+;; before `bind-bond` will succeed -- for the first bond and for every roll.
+
+(use-trait signer-manager-trait 'ST000000000000000000002AMW42H.pox-5.signer-manager-trait)
+
+;;; Errors
+
+(define-constant ERR_UNAUTHORIZED (err u100))
+(define-constant ERR_ALREADY_INITIALIZED (err u101))
+(define-constant ERR_NOT_INITIALIZED (err u102))
+(define-constant ERR_BOND_NOT_FOUND (err u103))
+(define-constant ERR_NOT_ALLOWLISTED (err u104))
+(define-constant ERR_ALLOCATION_EXCEEDED (err u105))
+(define-constant ERR_NOT_STAKED (err u107))
+(define-constant ERR_TOO_EARLY (err u108))
+(define-constant ERR_TOO_LATE (err u109))
+(define-constant ERR_NOTHING_DEPOSITED (err u110))
+(define-constant ERR_INVALID_SIGNER_MANAGER (err u111))
+(define-constant ERR_ALREADY_UNSTAKED (err u112))
+(define-constant ERR_POSITION_ACTIVE (err u113))
+(define-constant ERR_NOTHING_TO_CLAIM (err u114))
+(define-constant ERR_INVALID_AMOUNT (err u116))
+(define-constant ERR_SIGNER_NOT_REGISTERED (err u117))
+(define-constant ERR_NO_BOND_BOUND (err u118))
+(define-constant ERR_BOND_ALREADY_BOUND (err u119))
+(define-constant ERR_INVALID_BOND_INDEX (err u120))
+(define-constant ERR_INSUFFICIENT_STX (err u121))
+(define-constant ERR_NOT_EXITING (err u122))
+(define-constant ERR_ALREADY_EXITING (err u123))
+(define-constant ERR_UNKNOWN_EPOCH (err u124))
+(define-constant ERR_QUEUE_PENDING (err u125))
+
+;;; Protocol constants -- these mirror pox-5 and are not deployment knobs
+
+;; The length, in reward cycles, of a bond period. 12 cycles is ~6 months.
+(define-constant BOND_LENGTH_CYCLES u12)
+
+;; How many bond periods later the next seamless bond begins. pox-5 opens a
+;; bond every 2 cycles, so bond N + 6 is the first one whose term starts
+;; exactly where bond N's ends.
+(define-constant NEXT_BOND_OFFSET u6)
+
+;; How long before the bond starts `stake` may be called, in burn blocks.
+;; ~2 days: long enough to get the transaction mined, short enough that
+;; deposits stay open for as long as possible. Comfortably inside pox-5's own
+;; roll-over window, which opens half a reward cycle before the bond starts.
+(define-constant STAKE_WINDOW u288)
+
+;; Fixed-point scale for the per-share reward accumulator.
+(define-constant PRECISION u1000000000000) ;; 1e12
+
+;; How many closed epochs one settlement can catch up on. A member who has
+;; been away longer just settles more than once.
+(define-constant CATCHUP_STEPS (list u0 u1 u2 u3 u4 u5 u6 u7 u8 u9))
+
+;; Only this principal may `initialize` the contract.
+(define-constant DEPLOYER tx-sender)
+
+;;; Configuration
+
+(define-data-var initialized bool false)
+
+;; Binds each bond and may move the pool to another signer manager. Has no
+;; access to deposits, and cannot keep the pool from winding down: `stake` and
+;; `unstake-sbtc` are both permissionless.
+(define-data-var operator principal tx-sender)
+
+;; The signer manager the pool stakes through. `stake` only accepts this one.
+(define-data-var signer-manager principal tx-sender)
+
+;;; The bound bond -- the one the next `stake` will commit to
+
+(define-data-var bond-bound bool false)
+(define-data-var pending-bond-index uint u0)
+(define-data-var pending-max-sats uint u0)
+;; `stx-value-ratio` is uSTX per 100 sats, `min-ustx-ratio` is in bips.
+(define-data-var pending-stx-value-ratio uint u0)
+(define-data-var pending-min-ustx-ratio uint u0)
+(define-data-var pending-start-height uint u0)
+(define-data-var pending-unlock-height uint u0)
+
+;;; Epochs
+
+;; One record per bond the pool has staked into. Frozen at `stake`, except for
+;; the reward fields, which keep moving while the epoch is open.
+(define-map epochs
+  uint
+  {
+    bond-index: uint,
+    first-reward-cycle: uint,
+    unlock-burn-height: uint,
+    staked-at-height: uint,
+    ;; The reward weight committed to this bond, and the principal behind it.
+    total-shares: uint,
+    staked-sats: uint,
+    staked-ustx: uint,
+    ;; Rewards per share, scaled by PRECISION, and the total those shares have
+    ;; been credited so far.
+    reward-index: uint,
+    credited: uint,
+  }
+)
+
+;; Number of epochs opened. The live epoch is `epoch-count - 1`.
+(define-data-var epoch-count uint u0)
+
+;; Set by `unstake-sbtc`. The pool never stakes again.
+(define-data-var finished bool false)
+
+;;; Pooled principal
+;;
+;;   queued    deposited, not yet committed. In the treasury; withdrawable.
+;;   bonded    committed to the live bond. In pox-5's custody.
+;;   exiting   the part of `bonded` that the next roll will release.
+;;   released  ended positions, waiting to be claimed. In the treasury.
+;;
+;; `queued-sats + released-sats` is the treasury's sBTC balance, always.
+
+(define-data-var queued-sats uint u0)
+(define-data-var queued-ustx uint u0)
+(define-data-var bonded-sats uint u0)
+(define-data-var bonded-ustx uint u0)
+(define-data-var exiting-sats uint u0)
+(define-data-var exiting-ustx uint u0)
+(define-data-var released-sats uint u0)
+(define-data-var released-ustx uint u0)
+
+;;; Pooled rewards
+;;
+;; Credit is derived from an epoch's reward index in one step -- never
+;; accumulated per sync -- so it is floored the same way a member's own share
+;; is. Accumulating the per-sync floors instead would credit the pool less
+;; than the sum of the shares it owes (floor(a) + floor(b) can be one short of
+;; floor(a + b)), and the last member to claim would find the pool a satoshi
+;; light.
+
+(define-data-var total-credited uint u0)
+(define-data-var total-paid uint u0)
+
+(define-map members
+  principal
+  {
+    ;; Reward weight, from `settled-epoch` until the member leaves.
+    shares: uint,
+    ;; Committed principal. Claimable once the position has ended.
+    bonded-sats: uint,
+    bonded-ustx: uint,
+    ;; Deposited, not yet committed. Withdrawable until `queued-epoch` opens.
+    queued-sats: uint,
+    queued-ustx: uint,
+    queued-epoch: uint,
+    ;; Reward bookkeeping: `reward-index` is a snapshot of epoch
+    ;; `settled-epoch`'s index, `pending` is settled but unpaid.
+    settled-epoch: uint,
+    reward-index: uint,
+    pending: uint,
+    ;; The epoch during which they asked to leave; the roll out of that epoch
+    ;; releases them.
+    exit-epoch: (optional uint),
+  }
+)
+
+;;; Read-only: configuration and pool state
+
+(define-read-only (get-config)
+  {
+    initialized: (var-get initialized),
+    operator: (var-get operator),
+    signer-manager: (var-get signer-manager),
+    epoch-count: (var-get epoch-count),
+    finished: (var-get finished),
+  }
+)
+
+(define-read-only (get-bound-bond)
+  {
+    bound: (var-get bond-bound),
+    bond-index: (var-get pending-bond-index),
+    max-sats: (var-get pending-max-sats),
+    stx-value-ratio: (var-get pending-stx-value-ratio),
+    min-ustx-ratio: (var-get pending-min-ustx-ratio),
+    start-height: (var-get pending-start-height),
+    unlock-burn-height: (var-get pending-unlock-height),
+    stake-opens-at: (stake-window-start),
+  }
+)
+
+(define-read-only (get-pool)
+  {
+    queued-sats: (var-get queued-sats),
+    queued-ustx: (var-get queued-ustx),
+    bonded-sats: (var-get bonded-sats),
+    bonded-ustx: (var-get bonded-ustx),
+    exiting-sats: (var-get exiting-sats),
+    exiting-ustx: (var-get exiting-ustx),
+    released-sats: (var-get released-sats),
+    released-ustx: (var-get released-ustx),
+    total-credited: (var-get total-credited),
+    total-paid: (var-get total-paid),
+    unclaimed-rewards: (get-unclaimed-rewards),
+  }
+)
+
+(define-read-only (get-epoch (epoch uint))
+  (map-get? epochs epoch)
+)
+
+(define-read-only (get-live-epoch)
+  (if (is-eq (var-get epoch-count) u0)
+    none
+    (map-get? epochs (- (var-get epoch-count) u1))
+  )
+)
+
+(define-read-only (get-member (member principal))
+  (map-get? members member)
+)
+
+;; The sats and STX the next `stake` would commit, and the STX floor pox-5
+;; would require for them. `enough-stx` false means the roll cannot go through
+;; as things stand -- the bound bond prices sats higher in STX than the last
+;; one did, and the difference has to be deposited first.
+(define-read-only (get-stake-preview)
+  (let (
+      (sats (+ (- (var-get bonded-sats) (var-get exiting-sats))
+        (var-get queued-sats)
+      ))
+      (ustx (+ (- (var-get bonded-ustx) (var-get exiting-ustx))
+        (var-get queued-ustx)
+      ))
+    )
+    {
+      sats: sats,
+      ustx: ustx,
+      required-ustx: (get-required-ustx sats),
+      enough-stx: (>= ustx (get-required-ustx sats)),
+      within-allocation: (<= sats (var-get pending-max-sats)),
+    }
+  )
+)
+
+;; The STX leg pox-5 requires alongside `sats` for the *bound* bond, rounded
+;; up. Deposits are priced against the bond they are queued for.
+(define-read-only (get-required-ustx (sats uint))
+  (ceil-div
+    (* (ceil-div (* (var-get pending-stx-value-ratio) sats) u100)
+      (var-get pending-min-ustx-ratio)
+    )
+    u10000
+  )
+)
+
+;; The pooled principal pox-5 does not have custody of.
+(define-read-only (get-treasury-balance)
+  (contract-call? .bond-treasury get-balance)
+)
+
+(define-read-only (get-sbtc-balance)
+  (unwrap-panic
+    (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
+      get-balance current-contract
+    ))
+)
+
+;; Rewards credited to members that the pool has not paid out yet.
+(define-read-only (get-unclaimed-rewards)
+  (- (var-get total-credited) (var-get total-paid))
+)
+
+;; sBTC this contract holds beyond the rewards it has already recognised --
+;; the pot `sync-rewards` distributes. Every satoshi here is reward: the
+;; principal is the treasury's.
+(define-read-only (get-unrecognized-rewards)
+  (let (
+      (balance (get-sbtc-balance))
+      (recognized (get-unclaimed-rewards))
+    )
+    (if (> balance recognized)
+      (- balance recognized)
+      u0
+    )
+  )
+)
+
+;; First burn height at which `stake` may be called for the bound bond.
+(define-read-only (stake-window-start)
+  (let ((start (var-get pending-start-height)))
+    (if (> start STAKE_WINDOW)
+      (- start STAKE_WINDOW)
+      u0
+    )
+  )
+)
+
+;; An epoch stops taking rewards once the epoch after it has a full reward
+;; cycle behind it -- by then pox-5 has settled the last cycle of this
+;; epoch's bond. The latest epoch never closes, so a late payment always has
+;; somewhere to land.
+(define-read-only (is-epoch-closed (epoch uint))
+  (match (map-get? epochs (+ epoch u1))
+    next (>= burn-block-height
+      (contract-call? 'ST000000000000000000002AMW42H.pox-5
+        reward-cycle-to-burn-height (+ (get first-reward-cycle next) u1)
+      ))
+    false
+  )
+)
+
+;; The epoch `sync-rewards` credits: the oldest one still open.
+(define-read-only (get-reward-epoch)
+  (let ((count (var-get epoch-count)))
+    (if (is-eq count u0)
+      none
+      (if (and (> count u1) (not (is-epoch-closed (- count u2))))
+        (some (- count u2))
+        (some (- count u1))
+      )
+    )
+  )
+)
+
+(define-read-only (ceil-div
+    (numerator uint)
+    (denominator uint)
+  )
+  (if (is-eq denominator u0)
+    u0
+    (/ (+ numerator (- denominator u1)) denominator)
+  )
+)
+
+;;; Read-only: member state
+
+;; The member's record brought up to date: closed epochs settled, a queued
+;; deposit committed, an exit realised. This is what every member-facing
+;; function works from.
+(define-read-only (get-settled-member (member principal))
+  (match (map-get? members member)
+    record (some (settle record))
+    none
+  )
+)
+
+(define-read-only (get-claimable-rewards (member principal))
+  (match (map-get? members member)
+    record (get pending (settle record))
+    u0
+  )
+)
+
+;; True once the member's position has ended -- the pool wound down, or a roll
+;; has happened since they asked to leave.
+(define-read-only (has-ended (record {
+  shares: uint,
+  bonded-sats: uint,
+  bonded-ustx: uint,
+  queued-sats: uint,
+  queued-ustx: uint,
+  queued-epoch: uint,
+  settled-epoch: uint,
+  reward-index: uint,
+  pending: uint,
+  exit-epoch: (optional uint),
+}))
+  (or
+    (var-get finished)
+    (match (get exit-epoch record)
+      epoch (> (var-get epoch-count) (+ epoch u1))
+      false
+    )
+  )
+)
+
+;; Principal the member can take right now: their queued deposit always, plus
+;; their committed principal once the position has ended.
+(define-read-only (get-claimable-principal (member principal))
+  (match (map-get? members member)
+    stored (let ((record (settle stored)))
+      (if (has-ended record)
+        {
+          sats: (+ (get queued-sats record) (get bonded-sats record)),
+          ustx: (+ (get queued-ustx record) (get bonded-ustx record)),
+        }
+        {
+          sats: (get queued-sats record),
+          ustx: (get queued-ustx record),
+        }
+      )
+    )
+    {
+      sats: u0,
+      ustx: u0,
+    }
+  )
+)
+
+;;; Initialization
+
+;; Set the signer manager the pool stakes through and the operator that binds
+;; its bonds. Callable once, by the deployer.
+(define-public (initialize
+    (manager principal)
+    (pool-operator principal)
+  )
+  (begin
+    (asserts! (is-eq tx-sender DEPLOYER) ERR_UNAUTHORIZED)
+    (asserts! (not (var-get initialized)) ERR_ALREADY_INITIALIZED)
+    (asserts!
+      (is-some
+        (contract-call? 'ST000000000000000000002AMW42H.pox-5 get-signer-info
+          manager
+        ))
+      ERR_SIGNER_NOT_REGISTERED
+    )
+    (var-set signer-manager manager)
+    (var-set operator pool-operator)
+    (var-set initialized true)
+    (print (merge { topic: "initialize" } (get-config)))
+    (ok (get-config))
+  )
+)
+
+;; Bind the pool to the bond it will stake into next, opening deposits.
+;;
+;; The bond must already exist and have this contract on its allowlist. Every
+;; parameter but the allocation is read from pox-5, so none of them can be
+;; wrong. Rolling on from a live bond means an index at least
+;; NEXT_BOND_OFFSET ahead -- anything nearer overlaps the running term, and
+;; pox-5 would reject it.
+(define-public (bind-bond
+    (index uint)
+    (allocation-sats uint)
+  )
+  (let (
+      (bond (unwrap!
+        (contract-call? 'ST000000000000000000002AMW42H.pox-5 get-protocol-bond
+          index
+        )
+        ERR_BOND_NOT_FOUND
+      ))
+      (allowance (unwrap!
+        (contract-call? 'ST000000000000000000002AMW42H.pox-5 get-bond-allowance
+          index current-contract
+        )
+        ERR_NOT_ALLOWLISTED
+      ))
+      (start-height (contract-call? 'ST000000000000000000002AMW42H.pox-5
+        bond-period-to-burn-height index
+      ))
+      (start-cycle (contract-call? 'ST000000000000000000002AMW42H.pox-5
+        bond-period-to-reward-cycle index
+      ))
+      (unlock-height (contract-call? 'ST000000000000000000002AMW42H.pox-5
+        reward-cycle-to-burn-height (+ start-cycle BOND_LENGTH_CYCLES)
+      ))
+    )
+    (asserts! (var-get initialized) ERR_NOT_INITIALIZED)
+    (asserts! (is-eq tx-sender (var-get operator)) ERR_UNAUTHORIZED)
+    (asserts! (not (var-get finished)) ERR_ALREADY_UNSTAKED)
+    (asserts! (not (var-get bond-bound)) ERR_BOND_ALREADY_BOUND)
+    (asserts! (> allocation-sats u0) ERR_INVALID_AMOUNT)
+    ;; Never advertise more room than pox-5 will let the pool bond.
+    (asserts! (<= allocation-sats allowance) ERR_ALLOCATION_EXCEEDED)
+    ;; Deposits would be pointless: the bond can no longer be joined.
+    (asserts! (< burn-block-height start-height) ERR_TOO_LATE)
+    (asserts!
+      (match (get-live-epoch)
+        live (>= index (+ (get bond-index live) NEXT_BOND_OFFSET))
+        true
+      )
+      ERR_INVALID_BOND_INDEX
+    )
+
+    (var-set pending-bond-index index)
+    (var-set pending-max-sats allocation-sats)
+    (var-set pending-stx-value-ratio (get stx-value-ratio bond))
+    (var-set pending-min-ustx-ratio (get min-ustx-ratio bond))
+    (var-set pending-start-height start-height)
+    (var-set pending-unlock-height unlock-height)
+    (var-set bond-bound true)
+
+    (print (merge { topic: "bind-bond" } (get-bound-bond)))
+    (ok (get-bound-bond))
+  )
+)
+
+;;; Deposits
+
+;; Deposit `sats` of sBTC plus the STX leg the bound bond requires for it.
+;; The sBTC goes straight to the treasury; only the STX is held here, because
+;; pox-5 locks the staker's own STX. `get-required-ustx` says how much STX
+;; will be pulled.
+(define-public (deposit (sats uint))
+  (let (
+      (ustx (get-required-ustx sats))
+      (record (settle (get-or-create-member tx-sender)))
+      (committing (+ (get sats (get-stake-preview)) sats))
+      (depositor tx-sender)
+    )
+    (asserts! (var-get bond-bound) ERR_NO_BOND_BOUND)
+    (asserts! (> sats u0) ERR_INVALID_AMOUNT)
+    (asserts! (< burn-block-height (var-get pending-start-height)) ERR_TOO_LATE)
+    ;; Room is measured against what the next stake would commit, so a member
+    ;; on the way out frees up space for someone else in the same bond.
+    (asserts! (<= committing (var-get pending-max-sats)) ERR_ALLOCATION_EXCEEDED)
+    ;; A member on the way out has to come back in through `cancel-exit`.
+    (asserts! (is-none (get exit-epoch record)) ERR_ALREADY_EXITING)
+    ;; One queued batch at a time, so it cannot be re-dated to a later epoch
+    ;; than the one it paid for. Unreachable in practice -- a queue is
+    ;; committed within a cycle of its epoch opening, and the next bond cannot
+    ;; be bound anywhere near that soon -- but the accounting depends on it.
+    (asserts!
+      (or
+        (is-eq (get queued-sats record) u0)
+        (is-eq (get queued-epoch record) (var-get epoch-count))
+      )
+      ERR_QUEUE_PENDING
+    )
+
+    (try!
+      (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
+        transfer sats depositor .bond-treasury none
+      ))
+    (try! (stx-transfer? ustx depositor current-contract))
+
+    (map-set members depositor
+      (merge record {
+        queued-sats: (+ (get queued-sats record) sats),
+        queued-ustx: (+ (get queued-ustx record) ustx),
+        queued-epoch: (var-get epoch-count),
+      })
+    )
+    (var-set queued-sats (+ (var-get queued-sats) sats))
+    (var-set queued-ustx (+ (var-get queued-ustx) ustx))
+
+    (let ((result {
+        depositor: depositor,
+        sats: sats,
+        ustx: ustx,
+        queued-epoch: (var-get epoch-count),
+      }))
+      (print (merge { topic: "deposit" } result))
+      (ok result)
+    )
+  )
+)
+
+;; Take back a queued deposit, in full. Possible until the deposit is
+;; committed by `stake`, and still possible afterwards if that never happens,
+;; so a deposit can never be stranded.
+(define-public (withdraw)
+  (let (
+      (record (settle (unwrap! (map-get? members tx-sender) ERR_NOTHING_DEPOSITED)))
+      (sats (get queued-sats record))
+      (ustx (get queued-ustx record))
+      (depositor tx-sender)
+    )
+    (asserts! (> (+ sats ustx) u0) ERR_NOTHING_DEPOSITED)
+
+    (map-set members depositor
+      (merge record {
+        queued-sats: u0,
+        queued-ustx: u0,
+      })
+    )
+    (var-set queued-sats (- (var-get queued-sats) sats))
+    (var-set queued-ustx (- (var-get queued-ustx) ustx))
+    (try! (pay-principal depositor sats ustx))
+
+    (let ((result {
+        depositor: depositor,
+        sats: sats,
+        ustx: ustx,
+      }))
+      (print (merge { topic: "withdraw" } result))
+      (ok result)
+    )
+  )
+)
+
+;;; The bond position
+
+;; Commit the pool to the bound bond. The first call opens epoch 0; every
+;; later call rolls the live position into the next bond, adding the queued
+;; deposits and releasing the members who asked to leave.
+;;
+;; Permissionless: the only thing gating it is the clock, so no operator can
+;; strand the pool by not acting.
+(define-public (stake (manager <signer-manager-trait>))
+  (let (
+      (preview (get-stake-preview))
+      (sats (get sats preview))
+      (ustx (get ustx preview))
+      (index (var-get pending-bond-index))
+      (custodied (var-get bonded-sats))
+      (epoch (var-get epoch-count))
+      (start-cycle (contract-call? 'ST000000000000000000002AMW42H.pox-5
+        bond-period-to-reward-cycle index
+      ))
+    )
+    (asserts! (var-get bond-bound) ERR_NO_BOND_BOUND)
+    (asserts! (not (var-get finished)) ERR_ALREADY_UNSTAKED)
+    (asserts! (is-eq (contract-of manager) (var-get signer-manager))
+      ERR_INVALID_SIGNER_MANAGER
+    )
+    (asserts! (> sats u0) ERR_NOTHING_DEPOSITED)
+    (asserts! (get within-allocation preview) ERR_ALLOCATION_EXCEEDED)
+    ;; A bond prices sats in STX; a roll into one that prices them higher
+    ;; needs the difference deposited before it can go through.
+    (asserts! (get enough-stx preview) ERR_INSUFFICIENT_STX)
+    (asserts! (>= burn-block-height (stake-window-start)) ERR_TOO_EARLY)
+    (asserts! (< burn-block-height (var-get pending-start-height)) ERR_TOO_LATE)
+
+    ;; pox-5 moves only the difference between what it already holds for this
+    ;; staker and what the new bond needs, so top the contract up first when
+    ;; the position is growing.
+    (if (> sats custodied)
+      (try! (contract-call? .bond-treasury payout (- sats custodied)
+        current-contract
+      ))
+      u0
+    )
+
+    (let ((result (try! (as-contract?
+        (
+          ;; Covers whichever way the difference moves: out to pox-5 when the
+          ;; position grows, out to the treasury when it shrinks.
+          (with-ft 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
+            "sbtc-token" (if (> sats custodied)
+              (- sats custodied)
+              (- custodied sats)
+            ))
+          ;; pox-5 locks the pooled STX for the bond term, and resizes the
+          ;; lock in place when rolling.
+          (with-staking ustx)
+          (with-pox)
+        )
+        (let ((registered (try!
+            (contract-call? 'ST000000000000000000002AMW42H.pox-5
+              register-for-bond index manager ustx (err sats) none
+            ))))
+          ;; A shrinking roll refunds the difference to the staker; send it
+          ;; back to the treasury so this contract holds rewards only.
+          (if (< sats custodied)
+            (try!
+              (contract-call?
+                'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token transfer
+                (- custodied sats) tx-sender .bond-treasury none
+              ))
+            true
+          )
+          registered
+        )
+      ))))
+
+      (map-set epochs epoch {
+        bond-index: index,
+        first-reward-cycle: start-cycle,
+        unlock-burn-height: (var-get pending-unlock-height),
+        staked-at-height: burn-block-height,
+        total-shares: sats,
+        staked-sats: sats,
+        staked-ustx: ustx,
+        reward-index: u0,
+        credited: u0,
+      })
+      (var-set epoch-count (+ epoch u1))
+
+      ;; Members who asked to leave are released; the rest carry across.
+      (var-set released-sats (+ (var-get released-sats) (var-get exiting-sats)))
+      (var-set released-ustx (+ (var-get released-ustx) (var-get exiting-ustx)))
+      (var-set exiting-sats u0)
+      (var-set exiting-ustx u0)
+      (var-set queued-sats u0)
+      (var-set queued-ustx u0)
+      (var-set bonded-sats sats)
+      (var-set bonded-ustx ustx)
+      (var-set bond-bound false)
+
+      (print (merge {
+        topic: "stake",
+        epoch: epoch,
+        shares: sats,
+      }
+        result
+      ))
+      (ok result)
+    )
+  )
+)
+
+;; Wind the pool down for good: pull the pooled sBTC back out of pox-5 and
+;; release every position. Permissionless once the live bond's 12 cycles have
+;; run, which is also when the pooled STX unlocks.
+(define-public (unstake-sbtc (manager <signer-manager-trait>))
+  (let (
+      (live (unwrap! (get-live-epoch) ERR_NOT_STAKED))
+      (sats (var-get bonded-sats))
+    )
+    (asserts! (not (var-get finished)) ERR_ALREADY_UNSTAKED)
+    (asserts! (is-eq (contract-of manager) (var-get signer-manager))
+      ERR_INVALID_SIGNER_MANAGER
+    )
+    (asserts! (>= burn-block-height (get unlock-burn-height live)) ERR_TOO_EARLY)
+
+    (var-set finished true)
+    (var-set bond-bound false)
+    (var-set released-sats (+ (var-get released-sats) sats))
+    (var-set released-ustx (+ (var-get released-ustx) (var-get bonded-ustx)))
+    (var-set bonded-sats u0)
+    (var-set bonded-ustx u0)
+    (var-set exiting-sats u0)
+    (var-set exiting-ustx u0)
+
+    (let ((result (try! (as-contract?
+        ;; pox-5 returns the sBTC to the staker and the pooled STX comes out
+        ;; of its lock, which is a PoX state change. The sBTC goes straight
+        ;; back to the treasury, so that what this contract holds is rewards
+        ;; and nothing else.
+        (
+          (with-ft 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
+            "sbtc-token" sats
+          )
+          (with-pox)
+        )
+        (let ((unstaked (try!
+            (contract-call? 'ST000000000000000000002AMW42H.pox-5 unstake-sbtc
+              manager sats
+            ))))
+          (try!
+            (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
+              transfer sats tx-sender .bond-treasury none
+            ))
+          unstaked
+        )
+      ))))
+      (print (merge { topic: "unstake-sbtc" } result))
+      (ok result)
+    )
+  )
+)
+
+;; Move the pool's stake to a different signer manager for the remaining
+;; cycles. The operator picks the signer, exactly as it picked the initial one
+;; at `initialize`. Positions are untouched -- the bond term, the sats and the
+;; STX all stay as they are.
+(define-public (update-bond-registration
+    (manager <signer-manager-trait>)
+    (old-manager <signer-manager-trait>)
+  )
+  (begin
+    (asserts! (is-eq tx-sender (var-get operator)) ERR_UNAUTHORIZED)
+    (asserts! (is-some (get-live-epoch)) ERR_NOT_STAKED)
+    (asserts! (not (var-get finished)) ERR_ALREADY_UNSTAKED)
+    (asserts! (is-eq (contract-of old-manager) (var-get signer-manager))
+      ERR_INVALID_SIGNER_MANAGER
+    )
+
+    (var-set signer-manager (contract-of manager))
+
+    (let ((result (try! (as-contract?
+        ;; Only the signer behind the position changes: no asset may move.
+        ((with-pox))
+        (try!
+          (contract-call? 'ST000000000000000000002AMW42H.pox-5
+            update-bond-registration manager old-manager none
+          ))
+      ))))
+      (print (merge { topic: "update-bond-registration" } result))
+      (ok result)
+    )
+  )
+)
+
+;;; Leaving
+
+;; Ask to be released at the next roll. The queued part of the position is
+;; paid back immediately; the committed part is released when the pool rolls
+;; out of the live epoch, and its shares keep earning that bond's rewards
+;; until the epoch's book closes.
+;;
+;; If the pool never rolls again, `unstake-sbtc` releases it instead.
+(define-public (request-exit)
+  (let (
+      (record (settle (unwrap! (map-get? members tx-sender) ERR_NOTHING_DEPOSITED)))
+      (member tx-sender)
+      (sats (get bonded-sats record))
+      (ustx (get bonded-ustx record))
+      (refund-sats (get queued-sats record))
+      (refund-ustx (get queued-ustx record))
+      (epoch (var-get epoch-count))
+    )
+    (asserts! (> epoch u0) ERR_NOT_STAKED)
+    (asserts! (not (var-get finished)) ERR_ALREADY_UNSTAKED)
+    (asserts! (is-none (get exit-epoch record)) ERR_ALREADY_EXITING)
+    (asserts! (> sats u0) ERR_NOTHING_DEPOSITED)
+
+    (map-set members member
+      (merge record {
+        queued-sats: u0,
+        queued-ustx: u0,
+        exit-epoch: (some (- epoch u1)),
+      })
+    )
+    (var-set queued-sats (- (var-get queued-sats) refund-sats))
+    (var-set queued-ustx (- (var-get queued-ustx) refund-ustx))
+    (var-set exiting-sats (+ (var-get exiting-sats) sats))
+    (var-set exiting-ustx (+ (var-get exiting-ustx) ustx))
+    (try! (pay-principal member refund-sats refund-ustx))
+
+    (let ((result {
+        member: member,
+        sats: sats,
+        ustx: ustx,
+        refunded-sats: refund-sats,
+        refunded-ustx: refund-ustx,
+        exit-epoch: (- epoch u1),
+      }))
+      (print (merge { topic: "request-exit" } result))
+      (ok result)
+    )
+  )
+)
+
+;; Change your mind, as long as the roll has not happened yet.
+(define-public (cancel-exit)
+  (let (
+      (record (settle (unwrap! (map-get? members tx-sender) ERR_NOTHING_DEPOSITED)))
+      (member tx-sender)
+      (epoch (unwrap! (get exit-epoch record) ERR_NOT_EXITING))
+    )
+    ;; A request made during the live epoch is still ahead of its roll; an
+    ;; older one has already been realised and cannot be taken back.
+    (asserts! (is-eq epoch (- (var-get epoch-count) u1)) ERR_POSITION_ACTIVE)
+    (asserts! (not (var-get finished)) ERR_ALREADY_UNSTAKED)
+
+    (map-set members member (merge record { exit-epoch: none }))
+    (var-set exiting-sats (- (var-get exiting-sats) (get bonded-sats record)))
+    (var-set exiting-ustx (- (var-get exiting-ustx) (get bonded-ustx record)))
+
+    (let ((result {
+        member: member,
+        sats: (get bonded-sats record),
+        ustx: (get bonded-ustx record),
+      }))
+      (print (merge { topic: "cancel-exit" } result))
+      (ok result)
+    )
+  )
+)
+
+;;; Rewards
+
+;; Recognise sBTC that has arrived for the pool and split it across the shares
+;; of the oldest epoch still open. Permissionless, and safe to call as often
+;; as anyone likes: it only ever moves the surplus, and the sub-share
+;; remainder is left behind for the next call rather than being lost.
+(define-public (sync-rewards)
+  (let (
+      (epoch (unwrap! (get-reward-epoch) ERR_NOT_STAKED))
+      (record (unwrap! (map-get? epochs epoch) ERR_UNKNOWN_EPOCH))
+      (shares (get total-shares record))
+      (surplus (get-unrecognized-rewards))
+      ;; `shares` is non-zero for any epoch that exists -- `stake` rejects an
+      ;; empty pool -- but this `let` is evaluated before the assert below.
+      (delta (if (> shares u0)
+        (/ (* surplus PRECISION) shares)
+        u0
+      ))
+      (next-index (+ (get reward-index record) delta))
+      ;; Total ever credited to this epoch, recomputed from the new index
+      ;; rather than accumulated -- see `total-credited`.
+      (credited (/ (* shares next-index) PRECISION))
+      (recognized (- credited (get credited record)))
+    )
+    (asserts! (> recognized u0) ERR_NOTHING_TO_CLAIM)
+
+    (map-set epochs epoch
+      (merge record {
+        reward-index: next-index,
+        credited: credited,
+      })
+    )
+    (var-set total-credited (+ (var-get total-credited) recognized))
+
+    (let ((result {
+        epoch: epoch,
+        recognized: recognized,
+        reward-index: next-index,
+      }))
+      (print (merge { topic: "sync-rewards" } result))
+      (ok result)
+    )
+  )
+)
+
+;; Pay `member` the rewards their shares have earned, across every epoch they
+;; have been part of. Permissionless: the sBTC always goes to `member`, so
+;; anyone can settle up on their behalf.
+(define-public (claim-rewards (member principal))
+  (let (
+      (record (settle (unwrap! (map-get? members member) ERR_NOTHING_DEPOSITED)))
+      (amount (get pending record))
+    )
+    (asserts! (> amount u0) ERR_NOTHING_TO_CLAIM)
+
+    (map-set members member (merge record { pending: u0 }))
+    ;; Never exceeds what was credited: a member's share is floored against
+    ;; the same index the epoch's own credit is derived from, and the shares
+    ;; of an epoch sum to its total.
+    (var-set total-paid (+ (var-get total-paid) amount))
+
+    (try! (as-contract?
+      ((with-ft 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
+        "sbtc-token" amount
+      ))
+      (try!
+        (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
+          transfer amount tx-sender member none
+        ))
+    ))
+
+    (print {
+      topic: "claim-rewards",
+      member: member,
+      amount: amount,
+    })
+    (ok amount)
+  )
+)
+
+;; Return `member`'s principal once their position has ended -- they asked to
+;; leave and the pool has rolled on, or the pool has wound down. Their shares
+;; stay on the books, so rewards still owed for the bonds they were part of
+;; keep settling to them.
+(define-public (claim-principal (member principal))
+  (let (
+      (record (settle (unwrap! (map-get? members member) ERR_NOTHING_DEPOSITED)))
+      (sats (get bonded-sats record))
+      (ustx (get bonded-ustx record))
+    )
+    (asserts! (has-ended record) ERR_POSITION_ACTIVE)
+    (asserts! (> (+ sats ustx) u0) ERR_NOTHING_TO_CLAIM)
+
+    (map-set members member
+      (merge record {
+        bonded-sats: u0,
+        bonded-ustx: u0,
+      })
+    )
+    (var-set released-sats (- (var-get released-sats) sats))
+    (var-set released-ustx (- (var-get released-ustx) ustx))
+    (try! (pay-principal member sats ustx))
+
+    (let ((result {
+        member: member,
+        sats: sats,
+        ustx: ustx,
+      }))
+      (print (merge { topic: "claim-principal" } result))
+      (ok result)
+    )
+  )
+)
+
+;; Bring a member's record up to date without moving any money. Useful when a
+;; member has sat out more epochs than one settlement can catch up on.
+(define-public (settle-member (member principal))
+  (let ((record (settle (unwrap! (map-get? members member) ERR_NOTHING_DEPOSITED))))
+    (map-set members member record)
+    (ok record)
+  )
+)
+
+;;; Private helpers
+
+(define-private (get-or-create-member (member principal))
+  (default-to {
+    shares: u0,
+    bonded-sats: u0,
+    bonded-ustx: u0,
+    queued-sats: u0,
+    queued-ustx: u0,
+    queued-epoch: u0,
+    ;; A newcomer is settled at the epoch that has not opened yet: they hold
+    ;; no shares in anything that has already run.
+    settled-epoch: (var-get epoch-count),
+    reward-index: u0,
+    pending: u0,
+    exit-epoch: none,
+  }
+    (map-get? members member)
+  )
+)
+
+;; Pay principal out: the sBTC from the treasury, the STX from here.
+(define-private (pay-principal
+    (recipient principal)
+    (sats uint)
+    (ustx uint)
+  )
+  (begin
+    (if (> sats u0)
+      (try! (contract-call? .bond-treasury payout sats recipient))
+      u0
+    )
+    (if (> ustx u0)
+      (try! (as-contract?
+        ((with-stx ustx))
+        (try! (stx-transfer? ustx tx-sender recipient))
+      ))
+      true
+    )
+    (ok true)
+  )
+)
+
+;; Bring a member's record up to date: settle rewards for every closed epoch
+;; they lived through, commit a queued deposit the moment its epoch opened,
+;; drop their shares once an exit has been realised, and finally accrue
+;; whatever the epoch they now sit in has paid so far.
+(define-read-only (settle (record {
+  shares: uint,
+  bonded-sats: uint,
+  bonded-ustx: uint,
+  queued-sats: uint,
+  queued-ustx: uint,
+  queued-epoch: uint,
+  settled-epoch: uint,
+  reward-index: uint,
+  pending: uint,
+  exit-epoch: (optional uint),
+}))
+  (accrue-current (get record (fold advance-epoch CATCHUP_STEPS {
+    record: (commit-queue record),
+    done: false,
+  })))
+)
+
+;; A deposit queued for the epoch the member is already settled at -- which is
+;; how a newcomer starts out -- is committed as soon as that epoch opens.
+;; A queue for a *later* epoch is committed by `advance-epoch` instead, as the
+;; member is carried into it, so that they hold no shares in the epochs in
+;; between.
+(define-private (commit-queue (record {
+  shares: uint,
+  bonded-sats: uint,
+  bonded-ustx: uint,
+  queued-sats: uint,
+  queued-ustx: uint,
+  queued-epoch: uint,
+  settled-epoch: uint,
+  reward-index: uint,
+  pending: uint,
+  exit-epoch: (optional uint),
+}))
+  (if (and
+      (> (get queued-sats record) u0)
+      (<= (get queued-epoch record) (get settled-epoch record))
+      (< (get queued-epoch record) (var-get epoch-count))
+    )
+    (merge record {
+      shares: (+ (get shares record) (get queued-sats record)),
+      bonded-sats: (+ (get bonded-sats record) (get queued-sats record)),
+      bonded-ustx: (+ (get bonded-ustx record) (get queued-ustx record)),
+      queued-sats: u0,
+      queued-ustx: u0,
+    })
+    record
+  )
+)
+
+;; One step of the catch-up: close out `settled-epoch` and move into the next.
+;; Stops as soon as the epoch the member sits in is still open, since more
+;; rewards can still be credited to it.
+(define-private (advance-epoch
+    (step uint)
+    (state {
+      record: {
+        shares: uint,
+        bonded-sats: uint,
+        bonded-ustx: uint,
+        queued-sats: uint,
+        queued-ustx: uint,
+        queued-epoch: uint,
+        settled-epoch: uint,
+        reward-index: uint,
+        pending: uint,
+        exit-epoch: (optional uint),
+      },
+      done: bool,
+    })
+  )
+  (let (
+      (record (get record state))
+      (epoch (get settled-epoch record))
+    )
+    (if (or (get done state) (not (is-epoch-closed epoch)))
+      (merge state { done: true })
+      (let (
+          (final-index (default-to u0
+            (get reward-index (map-get? epochs epoch))
+          ))
+          (next (+ epoch u1))
+          ;; An exit asked for during `epoch` takes effect as the pool rolls
+          ;; out of it.
+          (leaving (is-eq (get exit-epoch record) (some epoch)))
+          ;; A deposit queued for `next` is committed as `next` opens.
+          (joining (is-eq (get queued-epoch record) next))
+          (joining-sats (if joining
+            (get queued-sats record)
+            u0
+          ))
+          (joining-ustx (if joining
+            (get queued-ustx record)
+            u0
+          ))
+        )
+        (merge state { record: (merge record {
+          pending: (+ (get pending record)
+            (/ (* (get shares record) (- final-index (get reward-index record)))
+              PRECISION
+            )),
+          reward-index: u0,
+          settled-epoch: next,
+          shares: (+
+            (if leaving
+              u0
+              (get shares record)
+            )
+            joining-sats
+          ),
+          bonded-sats: (+ (get bonded-sats record) joining-sats),
+          bonded-ustx: (+ (get bonded-ustx record) joining-ustx),
+          queued-sats: (- (get queued-sats record) joining-sats),
+          queued-ustx: (- (get queued-ustx record) joining-ustx),
+        }) })
+      )
+    )
+  )
+)
+
+;; Accrue what the epoch the member now sits in has credited since their
+;; snapshot. That epoch is still open, so this is re-run on every touch.
+(define-private (accrue-current (record {
+  shares: uint,
+  bonded-sats: uint,
+  bonded-ustx: uint,
+  queued-sats: uint,
+  queued-ustx: uint,
+  queued-epoch: uint,
+  settled-epoch: uint,
+  reward-index: uint,
+  pending: uint,
+  exit-epoch: (optional uint),
+}))
+  (let ((index (default-to u0
+      (get reward-index (map-get? epochs (get settled-epoch record)))
+    )))
+    (merge record {
+      pending: (+ (get pending record)
+        (/ (* (get shares record) (- index (get reward-index record))) PRECISION)
+      ),
+      reward-index: index,
+    })
+  )
+)

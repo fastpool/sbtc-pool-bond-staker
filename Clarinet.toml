@@ -1,0 +1,44 @@
+[project]
+name = "sbtc-pool-bond-staker"
+description = "Pooled sBTC + STX staker for pox-5 Bitcoin Staking Bonds"
+authors = []
+telemetry = false
+cache_dir = "./.cache"
+requirements = [
+    {contract_id = 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-withdrawal'},
+    # Needed for the `sbtc_balance` entries in settings/Devnet.toml to be
+    # minted into simnet accounts: sbtc-deposit is the protocol contract that
+    # performs that genesis mint. Without it every account holds 0 sBTC and no
+    # deposit or reward test can run.
+    {contract_id = 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-deposit'}
+]
+
+[repl.analysis]
+passes = ["check_checker"]
+check_checker = { trusted_sender = false, trusted_caller = false, callee_filter = false }
+
+[contracts]
+
+# Signer managers, for tests only: a bond participant has to stake through a
+# registered pox-5 signer. Sourced from the sibling fastpool-pox-5 project.
+[contracts.fastpool-signer-manager]
+path = "../fastpool-pox-5/contracts/fastpool-signer-manager.clar"
+clarity_version = 6
+epoch = "4.0"
+
+[contracts.signer-manager]
+path = "../fastpool-pox-5/contracts/signer-manager.clar"
+clarity_version = 6
+epoch = "4.0"
+
+# Holds the pooled sBTC principal. Must be deployed before `bond-staker`,
+# which calls it; its own reference back is only a principal value.
+[contracts.bond-treasury]
+path = "contracts/bond-treasury.clar"
+clarity_version = 6
+epoch = "4.0"
+
+[contracts.bond-staker]
+path = "contracts/bond-staker.clar"
+clarity_version = 6
+epoch = "4.0"

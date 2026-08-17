@@ -1,0 +1,298 @@
+// Fixture for the `bond-staker` pool: stands up pox-5 protocol bonds in
+// simnet, allowlists the pool for them, and binds the pool to one.
+//
+// Simnet's pox-5 is configured with `first-burnchain-block-height = 0`,
+// `reward-cycle-length = 1050` and `prepare-cycle-length = 50`, and bond
+// periods start every 2 cycles. So bond index N starts at burn height
+// N * 2100, and its 12 cycles end 12600 blocks later -- exactly where bond
+// N + 6 begins, which is what makes a roll seamless.
+//
+//   bond 2  ->  starts 4200,  ends 16800
+//   bond 8  ->  starts 16800, ends 29400
+//   bond 14 ->  starts 29400, ends 42000
+//
+// `setup-bond` may only be called by pox-5's bond admin. On simnet that role
+// is still the boot address the contract source names, which is the sender
+// used below -- no simnet wallet holds it.
+import {
+  Cl,
+  ClarityValue,
+  cvToValue,
+  privateKeyToPublic,
+  signMessageHashRsv,
+} from "@stacks/transactions";
+
+export const POX5 = "ST000000000000000000002AMW42H.pox-5";
+export const SBTC_DEPLOYER = "SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4";
+export const SBTC = `${SBTC_DEPLOYER}.sbtc-token`;
+export const MANAGER = "fastpool-signer-manager";
+export const ALT_MANAGER = "signer-manager";
+export const POOL = "bond-staker";
+export const TREASURY = "bond-treasury";
+
+/** pox-5's bond admin on simnet. */
+export const BOND_ADMIN = "ST000000000000000000002AMW42H";
+
+export const CYCLE_LENGTH = 1050;
+
+/** The bond the pool starts on, and the one it rolls into. */
+export const BOND_INDEX = 2;
+export const NEXT_BOND_INDEX = 8;
+/** uSTX per 100 sats: ~$100k BTC against ~$1 STX. */
+export const STX_VALUE_RATIO = 100_000;
+/** Basis points of the sBTC value that must be locked as STX -- 5%. */
+export const MIN_USTX_RATIO = 500;
+/** Sats the bond admin allowlists the pool for. */
+export const ALLOWANCE_SATS = 500_000_000;
+/** Sats the pool itself accepts, at or below the allowlisted amount. */
+export const MAX_SATS = 400_000_000;
+
+/** Deterministic grant keys; the trailing 01 marks them compressed. */
+const SIGNER_KEYS: Record<string, string> = {
+  [MANAGER]:
+    "010101010101010101010101010101010101010101010101010101010101010101",
+  [ALT_MANAGER]:
+    "020202020202020202020202020202020202020202020202020202020202020201",
+};
+
+const accounts = simnet.getAccounts();
+export const deployer = accounts.get("deployer")!;
+export const poolPrincipal = () => `${deployer}.${POOL}`;
+export const treasuryPrincipal = () => `${deployer}.${TREASURY}`;
+export const managerPrincipal = (name = MANAGER) => `${deployer}.${name}`;
+
+export const num = (cv: ClarityValue) => Number(cvToValue(cv, true));
+
+/**
+ * `cvToValue` leaves `{ type, value }` wrappers on nested fields; strip them
+ * so a tuple reads as a plain object.
+ */
+const unwrap = (value: any): any => {
+  if (value === null || typeof value !== "object") return value;
+  if (Array.isArray(value)) return value.map(unwrap);
+  if ("type" in value && "value" in value) return unwrap(value.value);
+  return Object.fromEntries(
+    Object.entries(value).map(([key, inner]) => [key, unwrap(inner)]),
+  );
+};
+
+export const plain = (cv: ClarityValue) => unwrap(cvToValue(cv, true));
+
+export function expectOk(cv: ClarityValue, label: string) {
+  if (cv.type === "err") {
+    throw new Error(`${label} failed: ${Cl.prettyPrint(cv)}`);
+  }
+  return cv;
+}
+
+export const readPox = (fn: string, args: ClarityValue[] = []) =>
+  simnet.callReadOnlyFn(POX5, fn, args, deployer).result;
+
+export const readPoxNum = (fn: string, args: ClarityValue[] = []) =>
+  num(readPox(fn, args));
+
+export const readPool = (fn: string, args: ClarityValue[] = []) =>
+  simnet.callReadOnlyFn(POOL, fn, args, deployer).result;
+
+export const sbtcBalance = (who: string) =>
+  num(
+    (
+      simnet.callReadOnlyFn(SBTC, "get-balance", [Cl.principal(who)], deployer)
+        .result as any
+    ).value,
+  );
+
+/** Total STX held, locked included. */
+export const stxBalance = (who: string) =>
+  Number(simnet.getAssetsMap().get("STX")?.get(who) ?? 0n);
+
+/** Mine burn blocks until `simnet.burnBlockHeight >= target`. */
+export function advanceToBurnHeight(target: number) {
+  const delta = target - simnet.burnBlockHeight;
+  if (delta > 0) simnet.mineEmptyBurnBlocks(delta);
+  return simnet.burnBlockHeight;
+}
+
+export const bondStartHeight = (index: number) =>
+  readPoxNum("bond-period-to-burn-height", [Cl.uint(index)]);
+
+/** Register a signer-manager contract as a pox-5 signer, with its own key. */
+export function registerSignerManager(name = MANAGER, authId = 1) {
+  const privateKey = SIGNER_KEYS[name];
+  const contractId = managerPrincipal(name);
+  const raw = (
+    simnet.callReadOnlyFn(
+      POX5,
+      "get-signer-grant-message-hash",
+      [Cl.principal(contractId), Cl.uint(authId)],
+      deployer,
+    ).result as any
+  ).value;
+  const messageHash =
+    typeof raw === "string" ? raw : Buffer.from(raw).toString("hex");
+  const signature = signMessageHashRsv({ messageHash, privateKey });
+
+  return simnet.callPublicFn(
+    name,
+    "register-self",
+    [
+      Cl.principal(contractId),
+      Cl.bufferFromHex(privateKeyToPublic(privateKey)),
+      Cl.uint(authId),
+      Cl.bufferFromHex(signature),
+    ],
+    deployer,
+  ).result;
+}
+
+/** Create a bond and allowlist the pool for `allowanceSats`. */
+export function setupBond(index = BOND_INDEX, allowanceSats = ALLOWANCE_SATS) {
+  // `setup-bond` is only allowed within 2 cycles of the bond start.
+  advanceToBurnHeight(bondStartHeight(index) - 2 * CYCLE_LENGTH);
+
+  const result = simnet.callPublicFn(
+    POX5,
+    "setup-bond",
+    [
+      Cl.uint(index),
+      Cl.uint(1000), // target rate, bips -- not used by the pool
+      Cl.uint(STX_VALUE_RATIO),
+      Cl.uint(MIN_USTX_RATIO),
+      Cl.bufferFromHex("00"), // early-unlock script, the sBTC path ignores it
+      Cl.list([
+        Cl.tuple({
+          staker: Cl.principal(poolPrincipal()),
+          "max-sats": Cl.uint(allowanceSats),
+        }),
+      ]),
+    ],
+    BOND_ADMIN,
+  ).result;
+  expectOk(result, `setup-bond ${index}`);
+  return result;
+}
+
+export const initializePool = (sender = deployer, manager = MANAGER) =>
+  simnet.callPublicFn(
+    POOL,
+    "initialize",
+    [Cl.principal(managerPrincipal(manager)), Cl.principal(deployer)],
+    sender,
+  ).result;
+
+export const bindBond = (
+  index = BOND_INDEX,
+  maxSats = MAX_SATS,
+  sender = deployer,
+) =>
+  simnet.callPublicFn(
+    POOL,
+    "bind-bond",
+    [Cl.uint(index), Cl.uint(maxSats)],
+    sender,
+  ).result;
+
+/** register signer + initialize + create bond + bind, ready for deposits. */
+export function bootstrap(maxSats = MAX_SATS) {
+  registerSignerManager();
+  expectOk(initializePool(), "initialize");
+  setupBond();
+  expectOk(bindBond(BOND_INDEX, maxSats), "bind-bond");
+  return {
+    bondStart: bondStartHeight(BOND_INDEX),
+    unlockHeight: Number(boundBond()["unlock-burn-height"]),
+  };
+}
+
+export const deposit = (who: string, sats: number) =>
+  simnet.callPublicFn(POOL, "deposit", [Cl.uint(sats)], who).result;
+
+export const withdraw = (who: string) =>
+  simnet.callPublicFn(POOL, "withdraw", [], who).result;
+
+export const stake = (who: string = deployer, manager = MANAGER) =>
+  simnet.callPublicFn(
+    POOL,
+    "stake",
+    [Cl.principal(managerPrincipal(manager))],
+    who,
+  ).result;
+
+export const unstakeSbtc = (who: string = deployer, manager = MANAGER) =>
+  simnet.callPublicFn(
+    POOL,
+    "unstake-sbtc",
+    [Cl.principal(managerPrincipal(manager))],
+    who,
+  ).result;
+
+export const updateBondRegistration = (
+  to: string,
+  from: string,
+  who: string = deployer,
+) =>
+  simnet.callPublicFn(
+    POOL,
+    "update-bond-registration",
+    [Cl.principal(to), Cl.principal(from)],
+    who,
+  ).result;
+
+export const requestExit = (who: string) =>
+  simnet.callPublicFn(POOL, "request-exit", [], who).result;
+
+export const cancelExit = (who: string) =>
+  simnet.callPublicFn(POOL, "cancel-exit", [], who).result;
+
+export const settleMember = (who: string, sender = deployer) =>
+  simnet.callPublicFn(POOL, "settle-member", [Cl.principal(who)], sender)
+    .result;
+
+export const syncRewards = (who: string = deployer) =>
+  simnet.callPublicFn(POOL, "sync-rewards", [], who).result;
+
+export const claimRewards = (member: string, who: string = deployer) =>
+  simnet.callPublicFn(POOL, "claim-rewards", [Cl.principal(member)], who)
+    .result;
+
+export const claimPrincipal = (member: string, who: string = deployer) =>
+  simnet.callPublicFn(POOL, "claim-principal", [Cl.principal(member)], who)
+    .result;
+
+/** Move sBTC into the pool, standing in for a signer-manager reward payout. */
+export const payRewards = (from: string, amount: number) =>
+  simnet.callPublicFn(
+    SBTC,
+    "transfer",
+    [
+      Cl.uint(amount),
+      Cl.principal(from),
+      Cl.principal(poolPrincipal()),
+      Cl.none(),
+    ],
+    from,
+  ).result;
+
+/** The STX leg pox-5 requires for `sats` under the bound bond. */
+export const requiredUstx = (sats: number) =>
+  num(readPool("get-required-ustx", [Cl.uint(sats)]));
+
+export const poolConfig = () => plain(readPool("get-config")) as any;
+export const boundBond = () => plain(readPool("get-bound-bond")) as any;
+export const poolTotals = () => plain(readPool("get-pool")) as any;
+export const epoch = (index: number) =>
+  plain(readPool("get-epoch", [Cl.uint(index)])) as any;
+export const member = (who: string) =>
+  plain(readPool("get-member", [Cl.principal(who)])) as any;
+export const settledMember = (who: string) =>
+  plain(readPool("get-settled-member", [Cl.principal(who)])) as any;
+/** The epoch `sync-rewards` would credit right now. */
+export const rewardEpoch = () => Number(plain(readPool("get-reward-epoch")));
+
+export const claimableRewards = (who: string) =>
+  num(readPool("get-claimable-rewards", [Cl.principal(who)]));
+export const claimablePrincipal = (who: string) =>
+  plain(readPool("get-claimable-principal", [Cl.principal(who)])) as any;
+
+/** The pooled principal: the treasury's sBTC balance. */
+export const treasuryBalance = () => sbtcBalance(treasuryPrincipal());
