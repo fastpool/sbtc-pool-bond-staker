@@ -6,8 +6,17 @@
 # not exist on testnet.
 #
 #   pnpm run build:testnet
-#   clarinet deployments generate --testnet --manifest-path Clarinet-testnet.toml --medium-cost
-#   clarinet deployments apply    --testnet --manifest-path Clarinet-testnet.toml
+#   pnpm run plan:testnet ST3YOUR…DEPLOYER
+#   clarinet deployments apply --testnet --manifest-path Clarinet-testnet.toml \
+#     --deployment-plan-path deployments/testnet-plan.yaml
+#
+# What is actually published, and under which names, comes from that plan.
+# This file is the project context around it.
+#
+# If the pool is built under another name -- `build:testnet -- --staker-name
+# vault-1`, to match an allowlist grant that names `<deployer>.vault-1` -- the
+# `[contracts.bond-staker]` section below has to be renamed to match, both in
+# its header and in its path. The plan generator takes the same flag.
 #
 [project]
 name = "sbtc-pool-bond-staker"
@@ -34,9 +43,16 @@ path = "build/testnet/bond-staker.clar"
 clarity_version = 6
 epoch = "4.0"
 
-# The L1 on- and off-ramp. Deployed last: it calls the two above, and neither
-# calls it.
+# The L1 on- and off-ramp. It calls the two above, and neither calls it.
 [contracts.bond-bridge]
 path = "build/testnet/bond-bridge.clar"
+clarity_version = 6
+epoch = "4.0"
+
+# The pool's operator, held by its members. Deployed after `bond-staker`, which
+# it calls; `bond-staker` does not know about it, and is initialized with the
+# deployer as operator -- the DAO is seated afterwards with `update-operator`.
+[contracts.esbee-dao]
+path = "build/testnet/esbee-dao.clar"
 clarity_version = 6
 epoch = "4.0"

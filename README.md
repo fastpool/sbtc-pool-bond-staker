@@ -358,12 +358,30 @@ Needs a funded seed phrase in `settings/Testnet.toml` (gitignored;
 placeholders, so the syntax is there to read before you have an address;
 regenerating overwrites it in place (`--template` puts it back).
 
-The plan is two batches: publish `bond-treasury`, `bond-staker`, `bond-bridge`,
-then call `initialize` once those are confirmed. The deployer address is a
-required argument because it appears in six places and `initialize` only
-accepts the contract's own deployer — a half-substituted plan would deploy
-under one identity and initialize under another. Publish fees are sized from
-the contract bytes at the fee rate in `settings/Testnet.toml`.
+The plan is three batches, each confirmed before the next: publish
+`bond-treasury`, `bond-staker`, `bond-bridge` and `esbee-dao` in dependency
+order; call `initialize`; then `update-operator(.esbee-dao, true)` to seat the
+DAO. The deployer takes the operator seat at `initialize` rather than the DAO,
+because `bind-bond` is deliberately not behind a vote — see the launch sequence
+above, where the DAO retires the key afterwards.
+
+The deployer address is a required argument because it appears throughout and
+`initialize` only accepts the contract's own deployer — a half-substituted plan
+would deploy under one identity and initialize under another. Publish fees are
+sized from the contract bytes at the fee rate in `settings/Testnet.toml`, and
+come to about 1.15 STX for the whole plan.
+
+`--staker-name` publishes the pool under another name, on both commands:
+
+    pnpm run build:testnet -- --staker-name vault-1
+    pnpm run plan:testnet ST3YOUR…DEPLOYER -- --staker-name vault-1
+
+pox-5 keys a bond's allowlist on the staker's *principal*, and a grant is only
+ever inserted by `setup-bond`, so a pool whose grant names `<deployer>.vault-1`
+has to be published under that name or it can never stake. The flag rewrites
+every `.bond-staker` reference in the sibling contracts along with the file
+name; `Clarinet-testnet.toml` names its contracts in section headers, so that
+one section has to be renamed by hand to match.
 
 `initialize` binds the pool to a signer manager, which must already be
 registered with pox-5. The default is

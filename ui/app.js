@@ -42,11 +42,16 @@ const config = {
   network: localStorage.getItem("network") ?? "testnet",
   deployer: localStorage.getItem("deployer") ?? "",
   manager: localStorage.getItem("manager") ?? "",
+  // The pool's contract name is not fixed: pox-5 keys a bond's allowlist on the
+  // staker's principal, so a deployment has to take whatever name the grant
+  // happens to spell -- `vault-1` on the current testnet bonds. Same contract,
+  // different label.
+  pool: localStorage.getItem("pool") || "bond-staker",
 };
 
 const $ = (id) => document.getElementById(id);
 const net = () => NETWORKS[config.network];
-const pool = () => ({ address: config.deployer, name: "bond-staker" });
+const pool = () => ({ address: config.deployer, name: config.pool || "bond-staker" });
 const bridge = () => ({ address: config.deployer, name: "bond-bridge" });
 
 let account = null;
@@ -275,11 +280,13 @@ function wire() {
   $("network").value = config.network;
   $("deployer").value = config.deployer;
   $("manager").value = config.manager;
+  $("pool").value = config.pool;
 
   for (const [id, key] of [
     ["network", "network"],
     ["deployer", "deployer"],
     ["manager", "manager"],
+    ["pool", "pool"],
   ]) {
     $(id).addEventListener("change", () => {
       config[key] = $(id).value.trim();

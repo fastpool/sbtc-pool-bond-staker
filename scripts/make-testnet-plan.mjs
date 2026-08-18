@@ -1,12 +1,17 @@
-// Write a testnet deployment plan: publish the three contracts, then call
-// `initialize` on the pool.
+// Write a testnet deployment plan: publish the four contracts, initialize the
+// pool, and hand the operator seat to the DAO.
 //
 //   node scripts/make-testnet-plan.mjs ST3YOUR…DEPLOYER [signer-manager]
+//   node scripts/make-testnet-plan.mjs ST3YOUR…DEPLOYER --staker-name vault-1
 //
-// The deployer address has to be given because it appears in six places and a
-// half-substituted plan would deploy under one identity and initialize under
+// The deployer address has to be given because it appears in a dozen places and
+// a half-substituted plan would deploy under one identity and initialize under
 // another. `initialize` only accepts the contract's own deployer, so the two
 // must match.
+//
+// `--staker-name` has to match whatever `build-network.mjs` was given, because
+// pox-5 keys a bond's allowlist on the staker's principal. Publishing under a
+// name the grant does not mention leaves a pool that can never stake.
 //
 // Publishes come from build/testnet/, whose sBTC and pox-5 addresses have been
 // rewritten for the network -- run `pnpm run build:testnet` first.
@@ -14,8 +19,28 @@ import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const [given, manager = "ST1B38CGQRPXEMRH7B66VXTS22DQTNMSW4YJJ7QK1.signer-manager"] =
-  process.argv.slice(2);
+const DEFAULT_MANAGER = "ST1B38CGQRPXEMRH7B66VXTS22DQTNMSW4YJJ7QK1.signer-manager";
+const STAKER = "bond-staker";
+
+const usage =
+  "usage: node scripts/make-testnet-plan.mjs <deployer-address> [signer-manager] [--staker-name <name>]\n" +
+  "       node scripts/make-testnet-plan.mjs --template";
+
+// `--staker-name` is pulled out first so it may sit anywhere, leaving the two
+// positional arguments where they have always been. A bare `--` is dropped:
+// pnpm forwards the separator itself when the flag is passed through `pnpm run`.
+const argv = process.argv.slice(2).filter((a) => a !== "--");
+let staker = STAKER;
+for (let i = argv.length - 1; i >= 0; i--) {
+  if (argv[i] !== "--staker-name") continue;
+  [staker] = argv.splice(i, 2).slice(1);
+  if (!/^[a-zA-Z]([a-zA-Z0-9]|[-_]){0,39}$/.test(staker ?? "")) {
+    console.error(`not a valid contract name: ${staker ?? "(missing)"}\n${usage}`);
+    process.exit(1);
+  }
+}
+
+const [given, manager = DEFAULT_MANAGER] = argv;
 
 // `--template` writes the same plan with the address left as a placeholder, so
 // the file on disk is always a working syntax reference even before anyone has
@@ -25,19 +50,23 @@ const template = given === "--template";
 const deployer = template ? "<DEPLOYER>" : given;
 
 if (!template && !/^S[TN][0-9A-HJKMNP-Z]{38,40}$/.test(deployer ?? "")) {
-  console.error(
-    "usage: node scripts/make-testnet-plan.mjs <deployer-address> [signer-manager]\n" +
-      "       node scripts/make-testnet-plan.mjs --template",
-  );
+  console.error(usage);
   process.exit(1);
 }
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const CONTRACTS = ["bond-treasury", "bond-staker", "bond-bridge"];
+
+// Dependency order, which is also the order Clarinet publishes them in:
+// `bond-staker` calls the treasury, `bond-bridge` calls both, and the DAO calls
+// `bond-staker`. Nothing calls the DAO, so it goes last.
+const CONTRACTS = ["bond-treasury", staker, "bond-bridge", "esbee-dao"];
 
 for (const name of CONTRACTS) {
   if (!existsSync(join(root, "build", "testnet", `${name}.clar`))) {
-    console.error(`build/testnet/${name}.clar is missing — run: pnpm run build:testnet`);
+    console.error(
+      `build/testnet/${name}.clar is missing — run: pnpm run build:testnet` +
+        (staker === STAKER ? "" : ` -- --staker-name ${staker}`),
+    );
     process.exit(1);
   }
 }
@@ -66,6 +95,9 @@ const header = template
 # Every <DEPLOYER> below has to be the account that publishes the contracts:
 # \`initialize\` only accepts the pool's own deployer, so publishing under one
 # identity and initializing under another leaves the pool unusable.
+#
+# To publish the pool under the name an allowlist grant spells, pass the same
+# \`-- --staker-name vault-1\` to both commands.
 `
   : "";
 
@@ -86,13 +118,37 @@ ${publish}
     # Binds the pool to its signer manager and names its operator. Only the
     # contract's own deployer may call it, and only once. A separate batch so
     # the publishes above are confirmed first.
+    #
+    # The deployer takes the seat rather than the DAO, because \`bind-bond\` is
+    # deliberately not behind a vote: a bond has to be bound inside the window
+    # pox-5 allows, which a voting period, a delay and a quorum cannot be relied
+    # on to hit. The DAO joins as a second operator in the next batch.
     - transaction-type: contract-call
-      contract-id: ${deployer}.bond-staker
+      contract-id: ${deployer}.${staker}
       expected-sender: ${deployer}
       method: initialize
       parameters:
         - "'${manager}"
         - "'${deployer}"
+      cost: 50000
+    epoch: '4.0'
+  - id: 2
+    transactions:
+    # Seats the DAO alongside the deployer, which is what puts the four voted
+    # powers -- signer moves, the trusted list, who the operators are, and
+    # sweeps -- in the members' hands.
+    #
+    # \`update-operator\` refuses to change the caller's own entry, so the
+    # deployer cannot retire itself here. Handing over completely is a later
+    # call *from the DAO*, by vote; leaving both seated is the right state for a
+    # testnet run, since only the keyed operator can bind a bond.
+    - transaction-type: contract-call
+      contract-id: ${deployer}.${staker}
+      expected-sender: ${deployer}
+      method: update-operator
+      parameters:
+        - "'${deployer}.esbee-dao"
+        - "true"
       cost: 50000
     epoch: '4.0'
 `;
@@ -102,6 +158,8 @@ const out = join(root, "deployments", "testnet-plan.yaml");
 writeFileSync(out, plan);
 console.log(`wrote ${out}${template ? " (template)" : ""}
   deployer / operator : ${deployer}
+  pool contract       : ${deployer}.${staker}
+  operator DAO        : ${deployer}.esbee-dao
   signer manager      : ${manager}
 
   clarinet deployments apply --testnet --manifest-path Clarinet-testnet.toml \\
