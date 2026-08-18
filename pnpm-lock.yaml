@@ -30,6 +30,12 @@ importers:
       '@stacks/rendezvous':
         specifier: ^1.0.3
         version: 1.0.3
+      c32check:
+        specifier: ^2.0.0
+        version: 2.0.0
+      stxer:
+        specifier: ^0.10.0
+        version: 0.10.0
 
 packages:
 
@@ -38,6 +44,10 @@ packages:
 
   '@noble/hashes@1.1.5':
     resolution: {integrity: sha512-LTMZiiLc+V4v1Yi16TD6aX2gmtKszNye0pQgbaLqkvhIqP7nVsSaJsWloGQjJfJ8offaoP5GtX3yY5swbcJxxQ==}
+
+  '@noble/hashes@2.3.0':
+    resolution: {integrity: sha512-oN+QwyX7VSHotibwubG3kpzbwKrfnyR6OOO+3Nk/53ADL7FmgHHz4TgrbaYKvvOw09u6QTx0oiH1cNCIOuN0CQ==}
+    engines: {node: '>= 20.19.0'}
 
   '@noble/secp256k1@1.7.1':
     resolution: {integrity: sha512-hOUk6AyBFmqVrv7k5WAw/LpszxVbj9gGN4JRkIX52fdFAj1UA61KXmZDvqVEm+pOyec3+fIeZB02LYa/pWOArw==}
@@ -155,8 +165,14 @@ packages:
     resolution: {integrity: sha512-1QJsSNRG1RF27bejQ/ifQ5ExxmLoe1UIWbotj/rPRZpWvOhCWp1p4aZ1N+gMuNawNVkXLdWoLOSmGdqkTfuYUQ==}
     hasBin: true
 
+  '@stacks/stacks-blockchain-api-types@7.14.1':
+    resolution: {integrity: sha512-65hvhXxC+EUqHJAQsqlBCqXB+zwfxZICSKYJugdg6BCp9I9qniyfz5XyQeC4RMVo0tgEoRdS/b5ZCFo5kLWmxA==}
+
   '@stacks/transactions@7.4.0':
     resolution: {integrity: sha512-scsQO3rSNNKcPHp56Wy5OeZiIpQNmmZOORz8bkQKWjzvzycAodtSWmAoHiMFAKSleR1NyeRIz642fReqlZU9tw==}
+
+  '@stacks/transactions@7.5.0':
+    resolution: {integrity: sha512-PhKe8ZIaVWvTbsTDE/26z9Dm6oYYZ2Cfhpg7xabE97bCE59KwuujBkvLVCJKEdlUn/P187120Go79UbGf9BywA==}
 
   '@stacks/transactions@7.6.0':
     resolution: {integrity: sha512-s7F7eJtQVnZoB79j8pY9SLKhlvvdYZZD1NSDRWrFjzSJTDmxptL8c50S563WFja6KOhFOgg1jd+p0XWTxFAVyA==}
@@ -264,6 +280,14 @@ packages:
     resolution: {integrity: sha512-7VT13fmjotKpGipCW9JEQAusEPE+Ei8nl6/g4FBAmIm0GOOLMua9NDDo/DWp0ZAxCr3cPq5ZpBqmPAQgDda2Pw==}
     engines: {node: '>= 8.10.0'}
 
+  clarity-abi@0.1.0:
+    resolution: {integrity: sha512-+hf+M/MXsZY7DeGsVOXwc6p8Fbq3xNm1Gdp2R3ASdUtXMDmdnAZPEg2RSI5kQu7sFhAkBvgLdpXvsv8E05m29g==}
+    peerDependencies:
+      typescript: '>=5.0.4'
+    peerDependenciesMeta:
+      typescript:
+        optional: true
+
   cliui@5.0.0:
     resolution: {integrity: sha512-PYeGSEmmHM6zvoef2w8TPzlrnNpXIjTipYK780YswmIP9vjxmd6Y2a3CB2Ks6/AU8NHjZugXvo8w3oWM2qnwXA==}
 
@@ -282,6 +306,9 @@ packages:
 
   cross-fetch@3.2.0:
     resolution: {integrity: sha512-Q+xVJLoGOeIMXZmbUK4HYk+69cQH6LudR0Vu/pRm2YlU/hDV9CiS0gKUMaWY5f2NeUH9C1nV3bsTlCo0FsTV1Q==}
+
+  cross-fetch@4.1.0:
+    resolution: {integrity: sha512-uKm5PU+MHTootlWEY+mZ4vvXoCn4fLQxT9dSc1sXVMSFkINTJVN8cAQROpwcKm8bJ/c7rgZVIBWzH5T78sNZZw==}
 
   decamelize@1.2.0:
     resolution: {integrity: sha512-z2S+W9X73hAUUki+N+9Za2lBlun89zigOyGrsax+KUQ6wKW4ZoWpEYBkGhQjwAjjDCkWxhY0VKEhk8wzY7F5cA==}
@@ -580,6 +607,10 @@ packages:
     resolution: {integrity: sha512-yDPMNjp4WyfYBkHnjIRLfca1i6KMyGCtsVgoKe/z1+6vukgaENdgGBZt+ZmKPc4gavvEZ5OgHfHdrazhgNyG7w==}
     engines: {node: '>=12'}
 
+  stxer@0.10.0:
+    resolution: {integrity: sha512-agK8AJZdzFhrx/d+UroVL8doKfBv9gadt9G/qb3E8cdwV3QbiJPghaYRxTT+DMPuWI2YrzQcsEOjGgUsyyIvog==}
+    engines: {node: '>=12'}
+
   tinybench@2.9.0:
     resolution: {integrity: sha512-0+DUvqWMValLmha6lr4kD8iAMK1HzV0/aKnCtWb9v9641TnP/MFb7Pc2bxoxQjTXAErryXVgUOfv2YqNllqGeg==}
 
@@ -601,6 +632,9 @@ packages:
 
   tr46@0.0.3:
     resolution: {integrity: sha512-N3WMsuqV66lT30CrXNbEjx4GEwlow3v6rr4mCcv6prnfwhS01rkgyFdjPNBYd9br7LpXV1+Emh01fHnq2Gdgrw==}
+
+  ts-clarity@0.1.1:
+    resolution: {integrity: sha512-pCzTGj+8n9yO99uxRRWo4BJ8j2ukWAKNYNoDjsFgOOdGI3fyOZgn/LYOhNxy1oL1br37sVnd60JajA4Rk7slMg==}
 
   undici-types@7.18.2:
     resolution: {integrity: sha512-AsuCzffGHJybSaRrmr5eHr81mwJU3kjw6M+uprWvCXiNeN9SOGwQ3Jn8jb8m3Z6izVgknn1R0FTCEAP2QrLY/w==}
@@ -744,6 +778,8 @@ snapshots:
 
   '@noble/hashes@1.1.5': {}
 
+  '@noble/hashes@2.3.0': {}
+
   '@noble/secp256k1@1.7.1': {}
 
   '@oxc-project/types@0.144.0': {}
@@ -822,7 +858,20 @@ snapshots:
     transitivePeerDependencies:
       - encoding
 
+  '@stacks/stacks-blockchain-api-types@7.14.1': {}
+
   '@stacks/transactions@7.4.0':
+    dependencies:
+      '@noble/hashes': 1.1.5
+      '@noble/secp256k1': 1.7.1
+      '@stacks/common': 7.6.0
+      '@stacks/network': 7.6.0
+      c32check: 2.0.0
+      lodash.clonedeep: 4.5.0
+    transitivePeerDependencies:
+      - encoding
+
+  '@stacks/transactions@7.5.0':
     dependencies:
       '@noble/hashes': 1.1.5
       '@noble/secp256k1': 1.7.1
@@ -955,6 +1004,8 @@ snapshots:
     optionalDependencies:
       fsevents: 2.3.3
 
+  clarity-abi@0.1.0: {}
+
   cliui@5.0.0:
     dependencies:
       string-width: 3.1.0
@@ -976,6 +1027,12 @@ snapshots:
   convert-source-map@2.0.0: {}
 
   cross-fetch@3.2.0:
+    dependencies:
+      node-fetch: 2.7.0
+    transitivePeerDependencies:
+      - encoding
+
+  cross-fetch@4.1.0:
     dependencies:
       node-fetch: 2.7.0
     transitivePeerDependencies:
@@ -1211,6 +1268,19 @@ snapshots:
     dependencies:
       ansi-regex: 6.3.0
 
+  stxer@0.10.0:
+    dependencies:
+      '@noble/hashes': 2.3.0
+      '@stacks/network': 7.6.0
+      '@stacks/stacks-blockchain-api-types': 7.14.1
+      '@stacks/transactions': 7.5.0
+      c32check: 2.0.0
+      clarity-abi: 0.1.0
+      ts-clarity: 0.1.1
+    transitivePeerDependencies:
+      - encoding
+      - typescript
+
   tinybench@2.9.0: {}
 
   tinyexec@1.3.0: {}
@@ -1227,6 +1297,16 @@ snapshots:
       is-number: 7.0.0
 
   tr46@0.0.3: {}
+
+  ts-clarity@0.1.1:
+    dependencies:
+      '@stacks/stacks-blockchain-api-types': 7.14.1
+      '@stacks/transactions': 7.6.0
+      clarity-abi: 0.1.0
+      cross-fetch: 4.1.0
+    transitivePeerDependencies:
+      - encoding
+      - typescript
 
   undici-types@7.18.2: {}
 

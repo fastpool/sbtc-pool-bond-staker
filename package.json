@@ -15,7 +15,9 @@
     "build:testnet": "node scripts/build-network.mjs testnet",
     "ui": "python3 -m http.server -d ui 8080",
     "build:mainnet": "node scripts/build-network.mjs mainnet",
-    "plan:testnet": "node scripts/make-testnet-plan.mjs"
+    "plan:testnet": "node scripts/make-testnet-plan.mjs",
+    "simulate:genesis": "node scripts/build-network.mjs mainnet && node scripts/simulate-mainnet.mjs genesis",
+    "simulate:bridge": "node scripts/build-network.mjs mainnet && node scripts/simulate-mainnet.mjs bridge"
   },
   "author": "",
   "license": "ISC",
@@ -28,6 +30,8 @@
     "vitest-environment-clarinet": "^3.0.0"
   },
   "devDependencies": {
-    "@stacks/rendezvous": "^1.0.3"
+    "@stacks/rendezvous": "^1.0.3",
+    "c32check": "^2.0.0",
+    "stxer": "^0.10.0"
   }
 }

@@ -381,6 +381,39 @@ Execution is permissionless — the mandate is the vote, not the executor. Two
 things the DAO cannot do: touch deposits, and remove itself from the operator
 seat, since `bond-staker` refuses to change the caller's own entry.
 
+## Simulating against mainnet
+
+The test suite runs against simnet stand-ins. `stxer` runs the same steps
+against a fork of real mainnet state — the pox-5 and sBTC that are actually
+deployed — and lets steps be sent from principals we hold no key for, which is
+the only way to model the bond admin's side of a launch. Nothing is signed or
+broadcast.
+
+    pnpm run simulate:genesis    # deploy -> allowlist -> bind -> deposit -> stake
+    pnpm run simulate:bridge     # the same, joining over L1 instead
+
+Each prints a per-step report and a stxer URL. The report matters: a failed
+contract deploy still comes back as an `Ok` transaction whose result is
+`(err none)`, with the reason only in `vm_error`, so a URL alone can look like
+success.
+
+The genesis run ends by reading pox-5 back — `get-total-sbtc-staked-for-bond`
+and `get-bond-membership` — so the pool's registration is confirmed by the
+protocol rather than by our own accounting.
+
+**The bond does not exist yet.** `setup-bond` has not been called for any index,
+so the simulation creates it, and every parameter under `BOND` in
+`scripts/simulate-mainnet.mjs` is *our assumption*, not the protocol's. What is
+being tested is the shape of the run, not the yields it implies.
+
+**The genesis bond is index 1, not 0.** The bond starting at burn height 966,350
+(reward cycle 143, [announced here][genesis]) is index 1; index 0 starts a cycle
+earlier, at 962,150. The script resolves the index from the height rather than
+assuming it. This matters beyond naming: a launch floor is only accepted on bond
+0, so a pool binding the genesis bond starts on whatever turned up.
+
+[genesis]: https://www.stacks.co/blog/the-genesis-bond-starts-at-bitcoin-block-966-350
+
 ## Deploying
 
     pnpm run build:testnet
