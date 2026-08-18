@@ -105,8 +105,8 @@
             <input id="deployer" placeholder="ST… (deployer of the pool)" />
           </div>
           <div class="grow">
-            <label for="pool">Pool contract name</label>
-            <input id="pool" placeholder="bond-staker" />
+            <label for="pool-name">Pool contract name</label>
+            <input id="pool-name" placeholder="vault-1" />
           </div>
           <div class="grow">
             <label for="manager">Signer manager</label>
@@ -149,38 +149,65 @@
 
         <div data-panel="btc" hidden>
           <p class="quote">
-            Announce the deposit <em>before</em> you broadcast it — until the
-            transaction is out, only you know its txid.
+            Commit and reveal <em>before</em> you broadcast — the txid reaches
+            Stacks already claimed, so the bitcoin mempool gives nothing away.
+            The salt is generated here and kept in this browser.
           </p>
           <label for="btc-sats">Amount (sats)</label>
           <input id="btc-sats" inputmode="numeric" placeholder="10000000" />
           <p class="quote" id="btc-quote"></p>
 
           <div class="step">
-            <strong>1. Announce</strong>
+            <strong>1. Commit</strong>
             <label for="btc-txid">Txid of the bitcoin transaction you are about to send</label>
             <input id="btc-txid" placeholder="64 hex characters" />
             <label for="btc-vout">Output index</label>
             <input id="btc-vout" inputmode="numeric" value="0" />
+            <p class="quote">
+              Sends a hash of the transaction and pays its STX leg. Nothing
+              about which transaction it is leaves your wallet yet.
+            </p>
             <div class="row" style="margin-top: .6rem">
-              <button id="announce">Announce</button>
-              <button id="cancel-announce" class="ghost">Cancel</button>
+              <button id="commit">Commit</button>
+              <button id="cancel-commit" class="ghost">Cancel commitment</button>
             </div>
           </div>
 
           <div class="step">
-            <strong>2. Send the bitcoin</strong>
+            <strong>2. Reveal</strong>
             <p class="quote">
-              To the pool's treasury: <code id="deposit-address">—</code>
+              Names the transaction and claims its txid, one bitcoin block after
+              the commit. Still nothing broadcast.
+            </p>
+            <div class="row">
+              <button id="reveal">Reveal</button>
+              <button id="cancel-announce" class="ghost">Cancel deposit</button>
+            </div>
+          </div>
+
+          <div class="step">
+            <strong>3. Send the bitcoin</strong>
+            <p class="quote">
+              Only once the reveal has confirmed. To the pool's treasury:
+              <code id="deposit-address">—</code>
               <br />Never to the staker contract: sBTC arriving there is taken
               for reward.
             </p>
           </div>
 
           <div class="step">
-            <strong>3. Confirm</strong>
+            <strong>4. Wait for the bridge</strong>
             <p class="quote">
-              Once the sBTC signers have swept it. Anyone can do this for you.
+              The sBTC signers sweep the deposit and mint to the treasury. They
+              take their bitcoin fee out of it, so a little less arrives than
+              you sent — the pool credits what arrives.
+            </p>
+          </div>
+
+          <div class="step">
+            <strong>5. Confirm</strong>
+            <p class="quote">
+              Anyone can do this for you.
             </p>
             <button id="confirm">Confirm deposit</button>
           </div>

@@ -92,7 +92,7 @@ one, and the roll after that is a whole bond term further on.
 | `bind-bond` | operator, once per bond | after the bond admin allowlists this contract. Opens deposits |
 | `deposit` | anyone | while a bond is bound and has not started |
 | `deposit-stx` | anyone | to raise the STX behind the pool's sats |
-| `bond-bridge.announce-btc-deposit` | anyone | to join with L1 bitcoin, paying the STX leg |
+| `bond-bridge.commit-btc-deposit` / `reveal-btc-deposit` | anyone | to join with L1 bitcoin, paying the STX leg |
 | `bond-bridge.confirm-btc-deposit` | anyone | once the sBTC signers have swept it |
 | `bond-bridge.claim-principal-to-btc` | a member | to take released principal out as bitcoin |
 | `withdraw` | a depositor | until their deposit is staked |
@@ -145,18 +145,45 @@ bitcoin transaction named and call nothing, so a deposit addressed to the pool
 arrives with no record of who sent it. `bond-bridge` has the member tie it
 themselves, in advance:
 
-1. `announce-btc-deposit(txid, vout, sats)` — records the transaction they are
-   about to broadcast and takes its STX leg. This is the one Stacks transaction
-   they were always going to have to send, since the STX cannot come from
-   bitcoin.
-2. They broadcast, addressing the bitcoin to `bond-treasury`.
-3. `confirm-btc-deposit(txid, vout)` — permissionless. Reads the sBTC registry,
+1. `commit-btc-deposit(digest, sats)` — `digest` is
+   `get-deposit-digest(txid, vout, salt)`, a hash of the transaction they are
+   about to make, with a salt they keep. This takes the STX leg — the one Stacks
+   transaction they were always going to have to send, since the STX cannot come
+   from bitcoin — and holds the pool's room.
+2. `reveal-btc-deposit(txid, vout, salt)` — names the transaction and claims its
+   txid, one bitcoin block after the commit at the earliest.
+3. They broadcast, addressing the bitcoin to `bond-treasury`.
+4. The sBTC signers sweep it and mint to the treasury.
+5. `confirm-btc-deposit(txid, vout)` — permissionless. Reads the sBTC registry,
    checks the sats landed in the treasury, and has the ledger queue them.
 
-Announcing *before* broadcasting is what makes this safe: until the transaction
-is out, nobody else can know its txid to announce it first. An announcement
-holds allocation room and can be cancelled for its STX back until the sweep
-lands — by the member at any time, by anyone after a week.
+**The order is the security argument.** A txid announced in the clear is exposed
+twice: in the Stacks mempool before the announcement confirms, and in the
+bitcoin mempool if the transaction is broadcast early. Either window lets an
+onlooker claim the txid first and be credited for someone else's bitcoin.
+
+The commit closes the first — a salted digest tells a watcher nothing. The
+reveal closes the second by happening *before* the broadcast: the txid reaches
+Stacks already claimed, and a watcher cannot open a commitment to a txid they
+never knew. First reveal takes the txid. The `REVEAL_DELAY` of one block stops
+a commit and its reveal sharing a block, which would let an onlooker pair their
+own commit with the reveal they just saw.
+
+That leaves the member one rule, the same one as before moved a step later: do
+not broadcast until the reveal has confirmed.
+
+Commitments are keyed by member as well as digest, so lifting someone's digest
+out of the mempool cannot stop them committing it themselves. A commitment can
+be cancelled for its STX back before the reveal (`cancel-btc-commitment`), and
+an announcement until the sweep lands (`cancel-btc-deposit`) — by the member at
+any time, by anyone after a week.
+
+`confirm` credits **what arrived**, not what was announced. The sBTC signers
+take their bitcoin fee out of the deposit, so the mint is normally a little
+smaller than the amount sent; the shortfall's allocation room goes back to the
+pool and the member keeps the STX leg they paid, which returns to them as
+released principal when they leave. An overpayment is not credited — the excess
+is unattributed principal.
 
 Going the other way, `claim-principal-to-btc(recipient, max-fee)` hands a
 member's released principal to the sBTC signers to pay out on bitcoin. The
@@ -359,9 +386,8 @@ placeholders, so the syntax is there to read before you have an address;
 regenerating overwrites it in place (`--template` puts it back).
 
 The plan is three batches, each confirmed before the next: publish
-`bond-treasury`, `bond-staker`, `bond-bridge` and `esbee-dao` in dependency
-order; call `initialize`; then `update-operator(.esbee-dao, true)` to seat the
-DAO. The deployer takes the operator seat at `initialize` rather than the DAO,
+`bond-treasury`, the pool, `bond-bridge` and `esbee-dao` in dependency order;
+call `initialize`; then `update-operator(.esbee-dao, true)` to seat the DAO. The deployer takes the operator seat at `initialize` rather than the DAO,
 because `bind-bond` is deliberately not behind a vote — see the launch sequence
 above, where the DAO retires the key afterwards.
 
@@ -369,19 +395,25 @@ The deployer address is a required argument because it appears throughout and
 `initialize` only accepts the contract's own deployer — a half-substituted plan
 would deploy under one identity and initialize under another. Publish fees are
 sized from the contract bytes at the fee rate in `settings/Testnet.toml`, and
-come to about 1.15 STX for the whole plan.
+come to about 1.23 STX for the whole plan.
 
-`--staker-name` publishes the pool under another name, on both commands:
+### The pool's name is per network
 
-    pnpm run build:testnet -- --staker-name vault-1
-    pnpm run plan:testnet ST3YOUR…DEPLOYER -- --staker-name vault-1
+**On testnet the pool is published as `vault-1`, not `bond-staker`.** pox-5 keys
+a bond's allowlist on the staker's *principal*, and a grant is only ever
+inserted by `setup-bond` — so a pool published under a name no grant mentions
+can never stake, and the testnet grants spell `<deployer>.vault-1`.
 
-pox-5 keys a bond's allowlist on the staker's *principal*, and a grant is only
-ever inserted by `setup-bond`, so a pool whose grant names `<deployer>.vault-1`
-has to be published under that name or it can never stake. The flag rewrites
-every `.bond-staker` reference in the sibling contracts along with the file
-name; `Clarinet-testnet.toml` names its contracts in section headers, so that
-one section has to be renamed by hand to match.
+`build:testnet` therefore emits `build/testnet/vault-1.clar`, rewriting every
+`.bond-staker` reference in the sibling contracts along with the file name; the
+plan generator and `Clarinet-testnet.toml` agree. `build:mainnet` keeps
+`bond-staker`. Nothing in `contracts/` changes, and the tests are unaffected.
+
+To publish under some other name again, pass `--staker-name` to both commands
+and rename the matching section in `Clarinet-testnet.toml`:
+
+    pnpm run build:testnet -- --staker-name vault-3
+    pnpm run plan:testnet ST3YOUR…DEPLOYER -- --staker-name vault-3
 
 `initialize` binds the pool to a signer manager, which must already be
 registered with pox-5. The default is

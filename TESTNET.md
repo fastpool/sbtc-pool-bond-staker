@@ -39,14 +39,14 @@ which is deployed (the address has no transactions at all). pox-5 only inserts
 allowances inside `setup-bond`, so these cannot be added to later or pointed at
 a different name.
 
-**So to use either existing grant, `bond-staker` has to be deployed under the
-name `vault-1`.** That is a rename in the testnet build, not a code change, and
-`build:testnet -- --staker-name vault-1` now does it — see
-[What has to change](#what-has-to-change-in-the-repo).
+**So on testnet the pool is called `vault-1`, not `bond-staker`.** That is a
+rename in the testnet build, not a code change, and `pnpm run build:testnet`
+does it by default — the name is a property of the network now, not a flag to
+remember. See [What has to change](#what-has-to-change-in-the-repo).
 
-Note the converse, which matters for the preferred path below: a *fresh* grant
-can name anything, so a bond created with `<deployer>.bond-staker` on its
-allowlist needs no rename at all.
+Ask for later grants under the same name. A fresh grant could in principle
+spell anything, but there is no reason to hold two names: `vault-1` is what is
+on the existing grants and what the build, the plan and the manifest all say.
 
 ## The blocker: bond 2 is already out of reach
 
@@ -82,11 +82,11 @@ for, can name the contract that is already on chain.
 
 **A. Ask for a grant on a later bond — preferred.** Whoever ran `setup-bond`
 for bonds 1 and 2 creates bond 3 (or any later index) with our staker on its
-allowlist. Bond 3 would start at 9000, opening a window at 8712 and leaving
-until 8136 to bind — comfortable. No code change, audited constants intact,
-and it is the only path that tests what will actually be deployed. Since the
-grant is new it can name `<deployer>.bond-staker` directly, so this path does
-not need the rename either.
+allowlist — as `STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM.vault-1`, the same
+name the existing grants use. Bond 3 would start at 9000, opening a window at
+8712 and leaving until 8136 to bind — comfortable. No code change, audited
+constants intact, and it is the only path that tests what will actually be
+deployed.
 
 Bond 3 does not exist yet: at 6847 the chain still has only bonds 1 and 2.
 Nothing on our side can create it — `setup-bond` is the protocol operator's
@@ -96,8 +96,8 @@ call — so this path starts with a request, not a deploy.
 grants already in hand, at the cost of running something the audit did not
 cover, in a race: four deploys, `initialize`, `update-operator`, `bind-bond`
 and the deposits all have to land before 7200, and `stake` inside
-`[6912, 7200)`. This is the path that needs `--staker-name vault-1`. Fine as a
-rehearsal of the mechanics; not evidence about the real contract.
+`[6912, 7200)`. Fine as a rehearsal of the mechanics; not evidence about the
+real contract.
 
 At 6847 there are ~350 burn blocks left before bond 2 starts — call it two to
 three days. Lowering the notice to `u36` would move the bind deadline to 7163
@@ -112,20 +112,18 @@ winds down at the end of its term instead of rolling. Same for bond 3 → bond 9
 
 Nothing — this is done. For the record, what it took:
 
-1. **The pool can be published under any name.** `scripts/build-network.mjs`
-   takes `--staker-name`, alongside the address rewriting it already did and
-   with the same fail-if-anything-is-left check. It rewrites the 17 `.bond-staker`
-   references — 1 in `bond-treasury.clar` (the `CONTROLLER` constant), 7 in
-   `bond-bridge.clar`, 9 in `esbee-dao.clar` — and writes the contract out
-   under the new file name. `scripts/make-testnet-plan.mjs` takes the same flag,
-   and the UI's pool name is a field rather than a constant.
+1. **The pool is named per network: `vault-1` on testnet, `bond-staker` on
+   mainnet.** `scripts/build-network.mjs` carries the name alongside the two
+   protocol addresses it already rewrote, with the same fail-if-anything-is-left
+   check. It rewrites the 17 `.bond-staker` references — 1 in
+   `bond-treasury.clar` (the `CONTROLLER` constant), 7 in `bond-bridge.clar`,
+   9 in `esbee-dao.clar` — and writes the contract out under the new file name.
+   `Clarinet-testnet.toml` and the generated plan say `vault-1`, and the UI takes
+   the pool name as a field defaulting to `vault-1` on testnet.
 
-   The build directory is now emptied before each run, so a build under one
-   name cannot leave the other one lying next to it.
-
-   One manual step is left: `Clarinet-testnet.toml` names its contracts in
-   section headers, so a rename means editing `[contracts.bond-staker]` and its
-   path there to match. The file says so.
+   `--staker-name` overrides it on both scripts, for a grant that spells
+   something else again. The build directory is emptied before each run, so a
+   build under one name cannot leave the other lying next to it.
 
 2. **`esbee-dao` is in the testnet pipeline.** It was missing from both the
    testnet manifest and the deployment plan, so the DAO would not have shipped
@@ -150,7 +148,7 @@ repo:
   the real seed phrase for `STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM`. Nothing
   can be signed until then — the file is gitignored, so it has to be filled in
   locally.
-- **STX at that address: still 0.** Needed for fees — the plan totals 1.15 STX
+- **STX at that address: still 0.** Needed for fees — the plan totals 1.23 STX
   at the fee rate in `settings/Testnet.toml` — and for the STX leg (0.5 STX per
   0.01 BTC deposited).
 - **sBTC at that address: still none.** Mint some through the testnet sBTC
@@ -168,7 +166,7 @@ Once the seed phrase and the funds are in place, and a bond we can actually
 reach exists:
 
 ```bash
-pnpm run build:testnet                     # add: -- --staker-name vault-1
+pnpm run build:testnet                     # -> build/testnet/vault-1.clar
 pnpm run plan:testnet STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM
 pnpm exec clarinet deployments apply --testnet \
   --manifest-path Clarinet-testnet.toml \
@@ -179,7 +177,7 @@ That plan is the launch. It runs three batches, each confirmed before the next:
 
 | batch | what |
 | --- | --- |
-| 0 | publishes `bond-treasury`, the pool, `bond-bridge`, `esbee-dao`, in dependency order. The treasury and the bridge need no wiring: they identify each other through constants |
+| 0 | publishes `bond-treasury`, `vault-1`, `bond-bridge`, `esbee-dao`, in dependency order. The treasury and the bridge need no wiring: they identify each other through constants |
 | 1 | `initialize(ST1B38…signer-manager, <deployer>)` — deployer-only, once. Also trusts that manager's code hash with no notice period, since nobody has deposited yet |
 | 2 | `update-operator(<deployer>.esbee-dao, true)` — seats the DAO |
 

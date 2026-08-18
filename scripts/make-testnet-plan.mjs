@@ -2,16 +2,17 @@
 // pool, and hand the operator seat to the DAO.
 //
 //   node scripts/make-testnet-plan.mjs ST3YOUR…DEPLOYER [signer-manager]
-//   node scripts/make-testnet-plan.mjs ST3YOUR…DEPLOYER --staker-name vault-1
+//   node scripts/make-testnet-plan.mjs ST3YOUR…DEPLOYER --staker-name vault-3
 //
 // The deployer address has to be given because it appears in a dozen places and
 // a half-substituted plan would deploy under one identity and initialize under
 // another. `initialize` only accepts the contract's own deployer, so the two
 // must match.
 //
-// `--staker-name` has to match whatever `build-network.mjs` was given, because
-// pox-5 keys a bond's allowlist on the staker's principal. Publishing under a
-// name the grant does not mention leaves a pool that can never stake.
+// `--staker-name` overrides the testnet name, and has to match whatever
+// `build-network.mjs` was given: pox-5 keys a bond's allowlist on the staker's
+// principal, so publishing under a name no grant mentions leaves a pool that
+// can never stake.
 //
 // Publishes come from build/testnet/, whose sBTC and pox-5 addresses have been
 // rewritten for the network -- run `pnpm run build:testnet` first.
@@ -20,7 +21,10 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const DEFAULT_MANAGER = "ST1B38CGQRPXEMRH7B66VXTS22DQTNMSW4YJJ7QK1.signer-manager";
-const STAKER = "bond-staker";
+// What the pool is called on testnet, because that is the name its allowlist
+// grants spell. `build-network.mjs` publishes it under the same name by
+// default; the two have to agree or the plan points at a file that is not there.
+const STAKER = "vault-1";
 
 const usage =
   "usage: node scripts/make-testnet-plan.mjs <deployer-address> [signer-manager] [--staker-name <name>]\n" +
@@ -56,9 +60,9 @@ if (!template && !/^S[TN][0-9A-HJKMNP-Z]{38,40}$/.test(deployer ?? "")) {
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-// Dependency order, which is also the order Clarinet publishes them in:
-// `bond-staker` calls the treasury, `bond-bridge` calls both, and the DAO calls
-// `bond-staker`. Nothing calls the DAO, so it goes last.
+// Dependency order, which is also the order Clarinet publishes them in: the
+// pool calls the treasury, `bond-bridge` calls both, and the DAO calls the
+// pool. Nothing calls the DAO, so it goes last.
 const CONTRACTS = ["bond-treasury", staker, "bond-bridge", "esbee-dao"];
 
 for (const name of CONTRACTS) {
@@ -96,8 +100,9 @@ const header = template
 # \`initialize\` only accepts the pool's own deployer, so publishing under one
 # identity and initializing under another leaves the pool unusable.
 #
-# To publish the pool under the name an allowlist grant spells, pass the same
-# \`-- --staker-name vault-1\` to both commands.
+# The pool is published as \`vault-1\` on testnet: pox-5 keys a bond's allowlist
+# on the staker's principal, and that is the name the grants spell. To use a
+# different one, pass the same \`-- --staker-name\` to both commands.
 `
   : "";
 

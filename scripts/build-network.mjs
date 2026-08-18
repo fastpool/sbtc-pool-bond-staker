@@ -17,15 +17,17 @@
 // mainnet-encoded sBTC, since simnet mirrors mainnet's deployment, and the
 // testnet-encoded boot address.
 //
-// The pool's own name is rewritable for the same reason. pox-5 keys a bond's
-// allowlist on the staker's *principal*, and a grant is only ever inserted by
-// `setup-bond` -- so if the grant names `<deployer>.vault-1`, the contract has
-// to be published under that name or it cannot stake. Nothing in the source
-// changes; `.bond-staker` is a local reference in three sibling contracts, and
-// this rewrites those alongside the file name.
+// The pool's own name is rewritten for the same reason, and it is per-network
+// rather than fixed. pox-5 keys a bond's allowlist on the staker's *principal*,
+// and a grant is only ever inserted by `setup-bond` -- so a contract published
+// under a name no grant mentions can never stake. On testnet the grants name
+// `<deployer>.vault-1`, so `vault-1` is simply what the pool is called there.
+// Nothing in the source changes; `.bond-staker` is a local reference in three
+// sibling contracts, and this rewrites those alongside the file name.
 //
-//   node scripts/build-network.mjs testnet
-//   node scripts/build-network.mjs testnet --staker-name vault-1
+//   node scripts/build-network.mjs testnet                     -> vault-1.clar
+//   node scripts/build-network.mjs mainnet                     -> bond-staker.clar
+//   node scripts/build-network.mjs testnet --staker-name vault-3
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -35,15 +37,26 @@ const SOURCE = {
   pox5: "ST000000000000000000002AMW42H",
 };
 
-const TARGETS = {
-  mainnet: { sbtc: SOURCE.sbtc, pox5: "SP000000000000000000002Q6VF78" },
-  testnet: { sbtc: "SN3VMHXEN64ZZF71JQ5VESXDWTR301XTTXGF4J8F1", pox5: SOURCE.pox5 },
-};
-
 // The contract as it is named in `contracts/`, and how its siblings refer to
 // it. The leading dot is what makes the token unambiguous: the prose comments
 // say `bond-staker` too, and those are not references.
 const STAKER = "bond-staker";
+
+// The name each network publishes the pool under. On testnet the allowlist
+// grants name `<deployer>.vault-1`, so that is what the pool has to be called
+// there -- not a variant to remember on the command line, but the name.
+const TARGETS = {
+  mainnet: {
+    sbtc: SOURCE.sbtc,
+    pox5: "SP000000000000000000002Q6VF78",
+    staker: STAKER,
+  },
+  testnet: {
+    sbtc: "SN3VMHXEN64ZZF71JQ5VESXDWTR301XTTXGF4J8F1",
+    pox5: SOURCE.pox5,
+    staker: "vault-1",
+  },
+};
 
 const usage =
   `usage: node scripts/build-network.mjs <${Object.keys(TARGETS).join("|")}> [--staker-name <name>]`;
@@ -57,7 +70,9 @@ if (!TARGETS[network]) {
 }
 const target = TARGETS[network];
 
-let staker = STAKER;
+// `--staker-name` overrides the network's own name, for the case where a grant
+// is issued against something else again.
+let staker = target.staker;
 for (let i = 0; i < rest.length; i++) {
   if (rest[i] !== "--staker-name") {
     console.error(`unexpected argument: ${rest[i]}\n${usage}`);

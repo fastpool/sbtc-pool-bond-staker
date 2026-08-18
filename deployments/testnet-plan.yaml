@@ -7,8 +7,9 @@
 # `initialize` only accepts the pool's own deployer, so publishing under one
 # identity and initializing under another leaves the pool unusable.
 #
-# To publish the pool under the name an allowlist grant spells, pass the same
-# `-- --staker-name vault-1` to both commands.
+# The pool is published as `vault-1` on testnet: pox-5 keys a bond's allowlist
+# on the staker's principal, and that is the name the grants spell. To use a
+# different one, pass the same `-- --staker-name` to both commands.
 ---
 id: 0
 name: Testnet deployment
@@ -26,21 +27,21 @@ plan:
       path: build/testnet/bond-treasury.clar
       clarity-version: 6
     - transaction-type: contract-publish
-      contract-name: bond-staker
+      contract-name: vault-1
       expected-sender: <DEPLOYER>
-      cost: 729370
-      path: build/testnet/bond-staker.clar
+      cost: 734330
+      path: build/testnet/vault-1.clar
       clarity-version: 6
     - transaction-type: contract-publish
       contract-name: bond-bridge
       expected-sender: <DEPLOYER>
-      cost: 120970
+      cost: 197080
       path: build/testnet/bond-bridge.clar
       clarity-version: 6
     - transaction-type: contract-publish
       contract-name: esbee-dao
       expected-sender: <DEPLOYER>
-      cost: 146570
+      cost: 146210
       path: build/testnet/esbee-dao.clar
       clarity-version: 6
     epoch: '4.0'
@@ -55,7 +56,7 @@ plan:
     # pox-5 allows, which a voting period, a delay and a quorum cannot be relied
     # on to hit. The DAO joins as a second operator in the next batch.
     - transaction-type: contract-call
-      contract-id: <DEPLOYER>.bond-staker
+      contract-id: <DEPLOYER>.vault-1
       expected-sender: <DEPLOYER>
       method: initialize
       parameters:
@@ -74,7 +75,7 @@ plan:
     # call *from the DAO*, by vote; leaving both seated is the right state for a
     # testnet run, since only the keyed operator can bind a bond.
     - transaction-type: contract-call
-      contract-id: <DEPLOYER>.bond-staker
+      contract-id: <DEPLOYER>.vault-1
       expected-sender: <DEPLOYER>
       method: update-operator
       parameters:

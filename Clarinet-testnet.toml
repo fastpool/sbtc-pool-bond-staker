@@ -13,10 +13,10 @@
 # What is actually published, and under which names, comes from that plan.
 # This file is the project context around it.
 #
-# If the pool is built under another name -- `build:testnet -- --staker-name
-# vault-1`, to match an allowlist grant that names `<deployer>.vault-1` -- the
-# `[contracts.bond-staker]` section below has to be renamed to match, both in
-# its header and in its path. The plan generator takes the same flag.
+# If the pool is ever built under another name -- `build:testnet -- --staker-name
+# vault-3`, to match a grant that spells something else -- the `[contracts.vault-1]`
+# section below has to be renamed to match, both in its header and in its path.
+# The plan generator takes the same flag.
 #
 [project]
 name = "sbtc-pool-bond-staker"
@@ -31,15 +31,18 @@ check_checker = { trusted_sender = false, trusted_caller = false, callee_filter 
 
 [contracts]
 
-# Holds the pooled sBTC principal. Must be deployed before `bond-staker`,
-# which calls it; its own reference back is only a principal value.
+# Holds the pooled sBTC principal. Must be deployed before the pool, which
+# calls it; its own reference back is only a principal value.
 [contracts.bond-treasury]
 path = "build/testnet/bond-treasury.clar"
 clarity_version = 6
 epoch = "4.0"
 
-[contracts.bond-staker]
-path = "build/testnet/bond-staker.clar"
+# The pool. Published as `vault-1` on testnet, because that is the name the
+# bonds' allowlist grants spell -- pox-5 keys a grant on the staker's principal,
+# and `build:testnet` names the contract to match.
+[contracts.vault-1]
+path = "build/testnet/vault-1.clar"
 clarity_version = 6
 epoch = "4.0"
 
@@ -49,9 +52,9 @@ path = "build/testnet/bond-bridge.clar"
 clarity_version = 6
 epoch = "4.0"
 
-# The pool's operator, held by its members. Deployed after `bond-staker`, which
-# it calls; `bond-staker` does not know about it, and is initialized with the
-# deployer as operator -- the DAO is seated afterwards with `update-operator`.
+# The pool's operator, held by its members. Deployed after the pool, which it
+# calls; the pool does not know about it, and is initialized with the deployer
+# as operator -- the DAO is seated afterwards with `update-operator`.
 [contracts.esbee-dao]
 path = "build/testnet/esbee-dao.clar"
 clarity_version = 6

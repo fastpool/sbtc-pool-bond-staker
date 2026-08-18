@@ -43,15 +43,17 @@ const config = {
   deployer: localStorage.getItem("deployer") ?? "",
   manager: localStorage.getItem("manager") ?? "",
   // The pool's contract name is not fixed: pox-5 keys a bond's allowlist on the
-  // staker's principal, so a deployment has to take whatever name the grant
-  // happens to spell -- `vault-1` on the current testnet bonds. Same contract,
-  // different label.
-  pool: localStorage.getItem("pool") || "bond-staker",
+  // staker's principal, so a deployment takes whatever name the grant spells.
+  // Same contract, different label -- `vault-1` on testnet, `bond-staker`
+  // elsewhere.
+  pool: localStorage.getItem("pool") || "",
 };
+
+const defaultPool = () => (config.network === "testnet" ? "vault-1" : "bond-staker");
 
 const $ = (id) => document.getElementById(id);
 const net = () => NETWORKS[config.network];
-const pool = () => ({ address: config.deployer, name: config.pool || "bond-staker" });
+const pool = () => ({ address: config.deployer, name: config.pool || defaultPool() });
 const bridge = () => ({ address: config.deployer, name: "bond-bridge" });
 
 let account = null;
@@ -280,13 +282,14 @@ function wire() {
   $("network").value = config.network;
   $("deployer").value = config.deployer;
   $("manager").value = config.manager;
-  $("pool").value = config.pool;
+  $("pool-name").value = config.pool;
+  $("pool-name").placeholder = defaultPool();
 
   for (const [id, key] of [
     ["network", "network"],
     ["deployer", "deployer"],
     ["manager", "manager"],
-    ["pool", "pool"],
+    ["pool-name", "pool"],
   ]) {
     $(id).addEventListener("change", () => {
       config[key] = $(id).value.trim();
@@ -347,22 +350,62 @@ function wire() {
     call(pool(), "cancel-exit", [], "Cancel exit"),
   );
 
-  $("announce").addEventListener("click", async () => {
+  // The salt has to survive between the commit and the reveal, and it has to
+  // stay secret until the reveal -- so it lives in this browser and nowhere
+  // else. Losing it before revealing means the commitment can only be
+  // cancelled, not used.
+  const saltKey = () => `salt:${txidField()}:${voutField()}`;
+  const rememberSalt = () => {
+    const bytes = crypto.getRandomValues(new Uint8Array(32));
+    const salt = [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+    localStorage.setItem(saltKey(), salt);
+    return salt;
+  };
+  const recallSalt = () => localStorage.getItem(saltKey());
+
+  $("commit").addEventListener("click", async () => {
+    if (!txidField()) return say("Enter the txid you are about to broadcast", "warn");
+    const salt = rememberSalt();
+    const digest = await readOnly(bridge(), "get-deposit-digest", [
+      Cl.bufferFromHex(txidField()),
+      Cl.uint(voutField()),
+      Cl.bufferFromHex(salt),
+    ]);
+    await call(
+      bridge(),
+      "commit-btc-deposit",
+      [Cl.bufferFromHex(String(plain(digest)).replace(/^0x/, "")),
+        Cl.uint(Number($("btc-sats").value))],
+      "Commit deposit",
+    );
+  });
+
+  $("reveal").addEventListener("click", async () => {
+    const salt = recallSalt();
+    if (!salt) {
+      return say(
+        "No salt stored for this txid in this browser — commit again from here",
+        "warn",
+      );
+    }
     const address = await readOnly(bridge(), "get-deposit-address").catch(
       () => null,
     );
     $("deposit-address").textContent = plain(address) ?? "";
-    call(
+    await call(
       bridge(),
-      "announce-btc-deposit",
+      "reveal-btc-deposit",
       [
-        Cl.bufferFromHex($("btc-txid").value.trim().replace(/^0x/, "")),
-        Cl.uint(Number($("btc-vout").value || 0)),
-        Cl.uint(Number($("btc-sats").value)),
+        Cl.bufferFromHex(txidField()),
+        Cl.uint(voutField()),
+        Cl.bufferFromHex(salt),
       ],
-      "Announce deposit",
+      "Reveal deposit",
     );
   });
+  const txidField = () => $("btc-txid").value.trim().replace(/^0x/, "");
+  const voutField = () => Number($("btc-vout").value || 0);
+
   $("confirm").addEventListener("click", () =>
     call(
       bridge(),
@@ -374,6 +417,26 @@ function wire() {
       "Confirm deposit",
     ),
   );
+  $("cancel-commit").addEventListener("click", async () => {
+    const salt = recallSalt();
+    if (!salt) return say("No salt stored for this txid in this browser", "warn");
+    if (!account) return say("Connect a wallet first", "warn");
+    const digest = await readOnly(bridge(), "get-deposit-digest", [
+      Cl.bufferFromHex(txidField()),
+      Cl.uint(voutField()),
+      Cl.bufferFromHex(salt),
+    ]);
+    await call(
+      bridge(),
+      "cancel-btc-commitment",
+      [
+        Cl.principal(account),
+        Cl.bufferFromHex(String(plain(digest)).replace(/^0x/, "")),
+      ],
+      "Cancel commitment",
+    );
+  });
+
   $("cancel-announce").addEventListener("click", () =>
     call(
       bridge(),

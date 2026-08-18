@@ -1925,6 +1925,15 @@
             )),
           queued-sats: (- (get queued-sats record) joining-sats),
           queued-ustx: (- (get queued-ustx record) joining-ustx),
+          ;; The request is spent here: this roll is what it asked for. Leaving
+          ;; the flag set would bar every deposit path with ERR_ALREADY_EXITING
+          ;; and offer no way back -- `cancel-exit` only takes back a request
+          ;; still ahead of its roll, which this one no longer is. A member who
+          ;; leaves is meant to be able to return, not to be barred for good.
+          exit-epoch: (if leaving
+            none
+            (get exit-epoch record)
+          ),
         }) }
         )
       )

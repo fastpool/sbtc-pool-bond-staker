@@ -338,18 +338,75 @@ export const sbtcSigner = () =>
     ).result,
   ) as string;
 
+/** The salt most tests use; only the commit/reveal tests care which it is. */
+export const SALT = "5a".repeat(32);
+
+export const REVEAL_DELAY = 1;
+
+/** Ask the contract what a (txid, vout, salt) commits to. */
+export const depositDigest = (txid: string, voutIndex = 0, salt = SALT) =>
+  (
+    readBridge("get-deposit-digest", [
+      Cl.bufferFromHex(txid),
+      Cl.uint(voutIndex),
+      Cl.bufferFromHex(salt),
+    ]) as any
+  ).value as string;
+
+export const commitBtcDeposit = (who: string, digest: string, sats: number) =>
+  simnet.callPublicFn(
+    BRIDGE,
+    "commit-btc-deposit",
+    [Cl.bufferFromHex(digest.replace(/^0x/, "")), Cl.uint(sats)],
+    who,
+  ).result;
+
+export const revealBtcDeposit = (
+  who: string,
+  txid: string,
+  voutIndex = 0,
+  salt = SALT,
+) =>
+  simnet.callPublicFn(
+    BRIDGE,
+    "reveal-btc-deposit",
+    [Cl.bufferFromHex(txid), Cl.uint(voutIndex), Cl.bufferFromHex(salt)],
+    who,
+  ).result;
+
+export const cancelBtcCommitment = (
+  member: string,
+  digest: string,
+  who: string = member,
+) =>
+  simnet.callPublicFn(
+    BRIDGE,
+    "cancel-btc-commitment",
+    [Cl.principal(member), Cl.bufferFromHex(digest.replace(/^0x/, ""))],
+    who,
+  ).result;
+
+/**
+ * The whole pre-broadcast half of the flow: commit, wait out REVEAL_DELAY,
+ * reveal. Returns the failing step's error if either fails, so callers can
+ * assert on it the way they did when this was one call.
+ */
 export const announceBtcDeposit = (
   who: string,
   txid: string,
   sats: number,
   voutIndex = 0,
-) =>
-  simnet.callPublicFn(
-    BRIDGE,
-    "announce-btc-deposit",
-    [Cl.bufferFromHex(txid), Cl.uint(voutIndex), Cl.uint(sats)],
+  salt = SALT,
+) => {
+  const committed = commitBtcDeposit(
     who,
-  ).result;
+    depositDigest(txid, voutIndex, salt),
+    sats,
+  );
+  if (committed.type === "err") return committed;
+  simnet.mineEmptyBurnBlocks(REVEAL_DELAY);
+  return revealBtcDeposit(who, txid, voutIndex, salt);
+};
 
 export const confirmBtcDeposit = (
   txid: string,
