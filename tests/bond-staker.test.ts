@@ -24,6 +24,8 @@ import {
   revealBtcDeposit,
   SALT,
   REVEAL_DELAY,
+  COMMIT_TTL,
+  ANNOUNCE_TTL,
   claimPrincipalToBtc,
   confirmBtcDeposit,
   reclaimBtcWithdrawal,
@@ -1398,10 +1400,33 @@ describe("bond-staker: committing and revealing an L1 deposit", () => {
   });
 
   it("lets anyone clear a commitment that has gone stale", () => {
+    const stxBefore = stxBalance(alice);
     expect(commitBtcDeposit(alice, digest(), ALICE_SATS).type).toBe("ok");
-    simnet.mineEmptyBurnBlocks(1000); // ANNOUNCE_TTL
+
+    // not a moment before COMMIT_TTL...
+    simnet.mineEmptyBurnBlocks(COMMIT_TTL - 1);
+    expect(cancelBtcCommitment(alice, digest(), carol)).toBeErr(Cl.uint(308));
+
+    simnet.mineEmptyBurnBlocks(1);
     expect(cancelBtcCommitment(alice, digest(), carol).type).toBe("ok");
     expect(num(readPool("get-committing-sats"))).toBe(0);
+    // the STX goes back to the member, not to whoever cleared it
+    expect(stxBalance(alice)).toBe(stxBefore);
+  });
+
+  it("clears a commitment far sooner than a revealed deposit", () => {
+    // A commitment is not a deposit in flight: nothing has been broadcast, so
+    // it does not get the week that a revealed one does.
+    expect(COMMIT_TTL).toBeLessThan(ANNOUNCE_TTL);
+
+    expect(commitBtcDeposit(alice, digest(), ALICE_SATS).type).toBe("ok");
+    simnet.mineEmptyBurnBlocks(REVEAL_DELAY);
+    expect(revealBtcDeposit(alice, TXID).type).toBe("ok");
+
+    // past COMMIT_TTL, but this one is revealed and holds its week
+    simnet.mineEmptyBurnBlocks(COMMIT_TTL);
+    expect(cancelBtcDeposit(TXID, 0, carol)).toBeErr(Cl.uint(308)); // LIVE
+    expect(cancelBtcDeposit(TXID, 0, alice).type).toBe("ok"); // its owner may
   });
 });
 

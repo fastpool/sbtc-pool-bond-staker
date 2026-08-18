@@ -173,10 +173,21 @@ That leaves the member one rule, the same one as before moved a step later: do
 not broadcast until the reveal has confirmed.
 
 Commitments are keyed by member as well as digest, so lifting someone's digest
-out of the mempool cannot stop them committing it themselves. A commitment can
-be cancelled for its STX back before the reveal (`cancel-btc-commitment`), and
-an announcement until the sweep lands (`cancel-btc-deposit`) — by the member at
-any time, by anyone after a week.
+out of the mempool cannot stop them committing it themselves.
+
+Either state can be cancelled for its STX back — a commitment before the reveal
+(`cancel-btc-commitment`), an announcement until the sweep lands
+(`cancel-btc-deposit`) — by the member at any time, by anyone once it has gone
+stale. The two wait different lengths, and deliberately:
+
+| | stale after | why |
+| --- | --- | --- |
+| commitment | `COMMIT_TTL`, 36 blocks (~6h) | nothing is in flight. The digest commits to the txid, so the transaction was built before the commit was sent, and the reveal normally follows one block later |
+| announcement | `ANNOUNCE_TTL`, 1000 blocks (~1 week) | the bitcoin may be broadcast and waiting on the signers, and must never be cancelled from under its owner |
+
+Both squat on allocation room while they stand, and both cost the squatter the
+STX leg for the duration — but a week of that per unrevealed commit would be a
+lot of leverage for the price.
 
 `confirm` credits **what arrived**, not what was announced. The sBTC signers
 take their bitcoin fee out of the deposit, so the mint is normally a little
@@ -395,7 +406,7 @@ The deployer address is a required argument because it appears throughout and
 `initialize` only accepts the contract's own deployer — a half-substituted plan
 would deploy under one identity and initialize under another. Publish fees are
 sized from the contract bytes at the fee rate in `settings/Testnet.toml`, and
-come to about 1.23 STX for the whole plan.
+come to about 1.24 STX for the whole plan.
 
 ### The pool's name is per network
 

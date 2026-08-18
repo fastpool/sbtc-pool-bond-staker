@@ -343,6 +343,12 @@ export const SALT = "5a".repeat(32);
 
 export const REVEAL_DELAY = 1;
 
+/** Burn blocks before a stranger may clear an unrevealed commitment. */
+export const COMMIT_TTL = 36;
+
+/** ...and before they may clear a revealed one. */
+export const ANNOUNCE_TTL = 1000;
+
 /** Ask the contract what a (txid, vout, salt) commits to. */
 export const depositDigest = (txid: string, voutIndex = 0, salt = SALT) =>
   (

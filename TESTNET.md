@@ -148,7 +148,7 @@ repo:
   the real seed phrase for `STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM`. Nothing
   can be signed until then — the file is gitignored, so it has to be filled in
   locally.
-- **STX at that address: still 0.** Needed for fees — the plan totals 1.23 STX
+- **STX at that address: still 0.** Needed for fees — the plan totals 1.24 STX
   at the fee rate in `settings/Testnet.toml` — and for the STX leg (0.5 STX per
   0.01 BTC deposited).
 - **sBTC at that address: still none.** Mint some through the testnet sBTC

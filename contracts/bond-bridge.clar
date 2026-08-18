@@ -84,6 +84,18 @@
 ;; that never comes cannot squat on the pool's room forever.
 (define-constant ANNOUNCE_TTL u1000)
 
+;; The same, for a commitment that was never revealed -- and much shorter,
+;; because a commitment is not a deposit in flight. Nothing has been broadcast,
+;; and nothing can have been: the digest commits to the txid, so the transaction
+;; was already built before the commit was sent. In the ordinary flow the reveal
+;; follows one block later, so six hours is generous against a stalled wallet
+;; while leaving a squatter far less room to hold the pool's allocation for.
+;;
+;; It costs the squatter either way -- the STX leg is locked for as long as the
+;; commitment stands -- but a week of that per commit is a lot of leverage for
+;; the price.
+(define-constant COMMIT_TTL u36)
+
 ;; How long a commitment has to sit before it may be revealed. Without it a
 ;; member could commit and reveal in one block -- and so could an onlooker who
 ;; saw that reveal in the mempool, pairing their own commit with it and racing
@@ -241,7 +253,7 @@
         sats: sats,
         ustx: ustx,
         revealable-from: (+ burn-block-height REVEAL_DELAY),
-        cancellable-from: (+ burn-block-height ANNOUNCE_TTL),
+        cancellable-from: (+ burn-block-height COMMIT_TTL),
       }))
       (print (merge { topic: "commit-btc-deposit" } result))
       (ok result)
@@ -318,9 +330,9 @@
 )
 
 ;; Give up on a commitment that was never revealed and take its STX leg back.
-;; The member may do this whenever; anyone may once ANNOUNCE_TTL burn blocks
-;; have passed, so a commitment that goes nowhere cannot hold the pool's room
-;; for good. Both arguments are public from the commit onwards.
+;; The member may do this whenever; anyone may once COMMIT_TTL burn blocks have
+;; passed, so a commitment that goes nowhere cannot hold the pool's room for
+;; long. Both arguments are public from the commit onwards.
 (define-public (cancel-btc-commitment
     (member principal)
     (digest (buff 32))
@@ -339,7 +351,7 @@
       (or
         (is-eq tx-sender member)
         (>= burn-block-height
-          (+ (get committed-at-height commitment) ANNOUNCE_TTL)
+          (+ (get committed-at-height commitment) COMMIT_TTL)
         )
       )
       ERR_ANNOUNCEMENT_LIVE

@@ -35,7 +35,7 @@ plan:
     - transaction-type: contract-publish
       contract-name: bond-bridge
       expected-sender: <DEPLOYER>
-      cost: 197080
+      cost: 208580
       path: build/testnet/bond-bridge.clar
       clarity-version: 6
     - transaction-type: contract-publish
