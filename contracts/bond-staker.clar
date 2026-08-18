@@ -180,6 +180,7 @@
 (define-constant ERR_SIGNER_NOT_TRUSTED (err u126))
 (define-constant ERR_ALREADY_TRUSTED (err u127))
 (define-constant ERR_NOT_A_CONTRACT (err u128))
+(define-constant ERR_BELOW_LAUNCH_FLOOR (err u129))
 
 ;;; Protocol constants -- these mirror pox-5 and are not deployment knobs
 
@@ -200,6 +201,9 @@
 ;; after it, which it does on both mainnet (2100-block cycles) and testnet
 ;; (900).
 (define-constant BIND_NOTICE u576)
+
+;; The one bond a launch floor may be set on: pox-5's first bond period.
+(define-constant GENESIS_BOND_INDEX u0)
 
 ;; How long before the bond starts `stake` may be called, in burn blocks.
 ;; ~2 days: long enough to get the transaction mined, short enough that
@@ -268,6 +272,9 @@
 (define-data-var bound-at-height uint u0)
 (define-data-var pending-bond-index uint u0)
 (define-data-var pending-max-sats uint u0)
+;; The least the pool will commit to this bond. `stake` refuses below it, so a
+;; pool that nobody showed up for never starts.
+(define-data-var pending-min-sats uint u0)
 ;; `stx-value-ratio` is uSTX per 100 sats, `min-ustx-ratio` is in bips.
 (define-data-var pending-stx-value-ratio uint u0)
 (define-data-var pending-min-ustx-ratio uint u0)
@@ -438,6 +445,7 @@
     bound: (var-get bond-bound),
     bond-index: (var-get pending-bond-index),
     max-sats: (var-get pending-max-sats),
+    min-sats: (var-get pending-min-sats),
     stx-value-ratio: (var-get pending-stx-value-ratio),
     min-ustx-ratio: (var-get pending-min-ustx-ratio),
     start-height: (var-get pending-start-height),
@@ -522,6 +530,9 @@
       scaled: (< sats eligible),
       stx-limited: (< affordable fits-allocation),
       allocation-limited: (< allocation eligible),
+      ;; Enough of a pool turned up to be worth starting.
+      min-sats: (var-get pending-min-sats),
+      meets-floor: (>= sats (var-get pending-min-sats)),
     }
   )
 )
@@ -800,8 +811,21 @@
 ;; Bind the pool to the bond it will stake into next, opening deposits.
 ;;
 ;; The bond must already exist and have this contract on its allowlist. Every
-;; parameter but the allocation is read from pox-5, so none of them can be
-;; wrong. Rolling on from a live bond means an index at least
+;; parameter but the allocation and the floor is read from pox-5, so none of
+;; them can be wrong.
+;;
+;; `min-sats` is what makes a launch the members' decision rather than the
+;; operator's. `stake` is permissionless and always was, so there is nothing to
+;; authorize -- the question is only whether enough of a pool turned up to be
+;; worth starting, and that is a number, not a vote. Set it to half the
+;; allocation and the pool starts only if it half fills; set it to zero and it
+;; starts on whatever it has.
+;;
+;; It is only accepted for the genesis bond, bond 0. Everywhere else it must be
+;; zero: a floor on a roll would risk the pool missing it and winding down at
+;; the end of its term, which is a worse outcome than rolling light. Since it
+;; can only be non-zero there, the check in `stake` is inert for every other
+;; bond without needing to know which one it is looking at. Rolling on from a live bond means an index at least
 ;; NEXT_BOND_OFFSET ahead -- anything nearer overlaps the running term, and
 ;; pox-5 would reject it.
 ;;
@@ -810,6 +834,7 @@
 (define-public (bind-bond
     (index uint)
     (allocation-sats uint)
+    (min-sats uint)
   )
   (begin
     (try! (authorize-operator))
@@ -842,6 +867,13 @@
       (asserts! (> allocation-sats u0) ERR_INVALID_AMOUNT)
       ;; Never advertise more room than pox-5 will let the pool bond.
       (asserts! (<= allocation-sats allowance) ERR_ALLOCATION_EXCEEDED)
+      ;; A floor above the ceiling would bind a bond that could never be staked.
+      (asserts! (<= min-sats allocation-sats) ERR_INVALID_AMOUNT)
+      ;; ...and a floor anywhere but the genesis bond is refused outright
+      ;; rather than quietly ignored.
+      (asserts! (or (is-eq index GENESIS_BOND_INDEX) (is-eq min-sats u0))
+        ERR_INVALID_AMOUNT
+      )
       ;; Deposits would be pointless: the bond can no longer be joined.
       (asserts! (< burn-block-height start-height) ERR_TOO_LATE)
       (asserts!
@@ -854,6 +886,7 @@
 
       (var-set pending-bond-index index)
       (var-set pending-max-sats allocation-sats)
+    (var-set pending-min-sats min-sats)
       (var-set pending-stx-value-ratio (get stx-value-ratio bond))
       (var-set pending-min-ustx-ratio (get min-ustx-ratio bond))
       (var-set pending-start-height start-height)
@@ -992,6 +1025,9 @@
     (asserts! (> eligible u0) ERR_NOTHING_DEPOSITED)
     ;; Nothing at all fits: the pool holds no usable STX for this bond.
     (asserts! (> sats u0) ERR_INSUFFICIENT_STX)
+    ;; Too few turned up. Nothing is committed, deposits stay withdrawable, and
+    ;; the bond simply passes the pool by.
+    (asserts! (get meets-floor preview) ERR_BELOW_LAUNCH_FLOOR)
     (asserts! (>= burn-block-height (stake-window-start)) ERR_TOO_EARLY)
     (asserts! (< burn-block-height (var-get pending-start-height)) ERR_TOO_LATE)
     ;; The members' notice on this bond has to have run out too, so nobody is

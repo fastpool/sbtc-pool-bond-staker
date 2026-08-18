@@ -1488,3 +1488,38 @@ describe("bond-staker: rotating the operator", () => {
   });
 });
 
+
+describe("bond-staker: the genesis launch floor", () => {
+  // The floor is only accepted on pox-5 bond 0, and bond 0 began at burn
+  // height 0 -- `setup-bond` for it is already too late in simnet, and always
+  // will be. So what is testable here is that the restriction holds; the
+  // enforcement itself is exercised by the rendezvous harness, which sets the
+  // floor directly and mirrors `stake`'s checks.
+  it("refuses a floor on any bond but the genesis one", () => {
+    registerSignerManager();
+    initializePool();
+    setupBond();
+    expect(bindBond(BOND_INDEX, MAX_SATS, deployer, MAX_SATS / 2)).toBeErr(
+      Cl.uint(116), // INVALID_AMOUNT -- a floor here would be a trap on rolls
+    );
+  });
+
+  it("refuses a floor above the allocation it could never reach", () => {
+    registerSignerManager();
+    initializePool();
+    setupBond();
+    // rejected on both counts: above the ceiling, and not the genesis bond
+    expect(bindBond(BOND_INDEX, MAX_SATS, deployer, MAX_SATS + 1)).toBeErr(
+      Cl.uint(116),
+    );
+  });
+
+  it("binds with no floor, and starts on whatever has gathered", () => {
+    const { bondStart } = bootstrap();
+    expect(Number(boundBond()["min-sats"])).toBe(0);
+    expect(stakePreview()["meets-floor"]).toBe(true);
+    deposit(alice, 1);
+    advanceToBurnHeight(bondStart - 288);
+    expect(stake().type).toBe("ok");
+  });
+});

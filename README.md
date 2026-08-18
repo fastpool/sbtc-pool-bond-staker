@@ -31,6 +31,7 @@ the built artefact against it.
 | `bond-treasury` | holds the pooled sBTC principal |
 | `bond-staker` | the ledger: deposits, shares, the bond position, rewards |
 | `bond-bridge` | the L1 bitcoin on-ramp and off-ramp |
+| `esbee-dao` | optional: the operator seat, held by the members |
 
 Deploy in that order — each calls the ones above it and is called by none of
 them, so there is no cycle to break. `bond-treasury` names its two callers as
@@ -261,6 +262,86 @@ has deposited yet, so there is nothing to give notice about.
 
 Adding is slow and removing is instant, which is the right way round: removal
 only ever narrows what the operator can do.
+
+## Launching
+
+The pool is started by whoever turns up, not by whoever deployed it. `stake` is
+permissionless and always was, so there is no launch button for anyone to hold
+— the only question is whether enough of a pool gathered to be worth starting,
+and that is a number rather than a vote.
+
+`bind-bond(index, allocation-sats, min-sats)` sets it. Below the floor, `stake`
+returns `ERR_BELOW_LAUNCH_FLOOR (u129)`, nothing is committed, and every deposit
+stays withdrawable. Half the allocation is a reasonable floor; zero starts on
+whatever has gathered.
+
+A floor is only accepted for **bond 0, the genesis bond** — everywhere else
+`min-sats` must be zero, or `bind-bond` returns `ERR_INVALID_AMOUNT`. A launch
+is the one moment where refusing to start is the better outcome. A floor on a
+roll is not: miss it and the pool winds down at term, which is worse than
+rolling light. Confining it to bond 0 also makes the check in `stake` inert
+everywhere else without `stake` having to know which bond it is looking at.
+
+    a. deploy the four contracts
+    b. trust-signer-manager(hash) for each vetted signer manager
+    c. update-operator(.esbee-dao, true)
+    d. bind-bond(index, allocation, allocation / 2)
+    e. members deposit; anyone calls stake once the floor is met
+    f. the DAO votes the deployer key out
+
+Note the ordering of (c) and (f). The DAO cannot vote before the pool has
+staked — voting weight is committed shares, and there are none until then — so
+the deployer necessarily holds the operator seat through the launch window and
+the DAO retires it afterwards. During that window the deployer can bind a bond,
+but `BIND_NOTICE` and the floor both apply, and members can withdraw right up
+until `stake`. It is a real trust window, and it is bounded by the fact that
+nothing the operator does can reach a deposit.
+
+On testnet, see [TESTNET.md](TESTNET.md) — the allowlist grant is keyed on the
+staker's principal, which decides what the contract has to be *named*.
+
+## Esbee DAO
+
+The operator seat can be held by a contract instead of a key. `esbee-dao` puts
+five of the operator's powers behind a vote of the pool's own members — see
+[brand/](brand/) for where the name comes from.
+
+Binding is not among them, and deliberately so. `bind-bond` has to land inside
+a window pox-5 fixes — after the bond is set up, and `BIND_NOTICE` before the
+stake window closes — and a vote that takes a voting period plus an execution
+delay to clear cannot be relied on to hit it. The seat can hold both: a key
+that binds, and the DAO for everything a vote can be trusted to time.
+
+    bond-staker.update-operator(.esbee-dao, true)   # sitting operator hands over
+    bond-staker.update-operator(<old key>, false)   # ...and retires
+
+A member's weight is the **square root of their committed sats**, so a holder
+ten thousand times larger has a hundred times the say rather than ten thousand.
+Only committed shares count: a queued deposit is withdrawable on demand, and
+counting it would let anyone rent a majority for one transaction — deposit,
+vote, withdraw.
+
+Every proposal is a set of parameters for one operator call, raised through a
+typed entry point (`propose-trust-signer`, `propose-signer-change`, …) so a
+mandate for one power can never be spent on another. To land, it has to clear
+all of:
+
+| line | why |
+| --- | --- |
+| voting period (~2 days) | cannot be raised and settled before anyone looks |
+| quorum (30% of turnout) | an empty room does not decide |
+| supermajority (60% of votes cast) | a bare majority is not a mandate |
+| execution delay (~1 day) | members who dislike the outcome can `request-exit` first |
+| execution window (~1 week) | a stale mandate cannot be dusted off later |
+| same epoch throughout | if the pool rolls, the membership that voted is not the one that would live with it |
+
+`get-status(id)` returns every one of those as a field, so a UI can show which
+line a proposal is still behind rather than a bare pass/fail. Proposing, voting
+and executing all `print` a topic for indexers.
+
+Execution is permissionless — the mandate is the vote, not the executor. Two
+things the DAO cannot do: touch deposits, and remove itself from the operator
+seat, since `bond-staker` refuses to change the caller's own entry.
 
 ## Deploying
 

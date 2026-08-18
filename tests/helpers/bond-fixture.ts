@@ -193,11 +193,12 @@ export const bindBond = (
   index = BOND_INDEX,
   maxSats = MAX_SATS,
   sender = deployer,
+  minSats = 0,
 ) =>
   simnet.callPublicFn(
     POOL,
     "bind-bond",
-    [Cl.uint(index), Cl.uint(maxSats)],
+    [Cl.uint(index), Cl.uint(maxSats), Cl.uint(minSats)],
     sender,
   ).result;
 

@@ -54,7 +54,11 @@
     (bips uint)
     (blocks-ahead uint)
   )
-  (let ((start (+ burn-block-height u1 (mod blocks-ahead u200))))
+  ;; Far enough out that BIND_NOTICE (576) runs out before the stake window
+  ;; opens at start - 288. Bound any nearer and the notice outlasts the bond's
+  ;; start, which is exactly the trap `bind-bond` warns about -- and which had
+  ;; been silently stopping this harness from ever opening an epoch.
+  (let ((start (+ burn-block-height u900 (mod blocks-ahead u400))))
     (asserts! (not (var-get finished)) ERR_ALREADY_UNSTAKED)
     ;; Same rule as `bind-bond`: a bond whose window has closed unstaked can be
     ;; replaced. rv jumps hundreds of burn blocks between rounds, so without
@@ -77,6 +81,17 @@
     )
     (var-set pending-bond-index (* (var-get epoch-count) NEXT_BOND_OFFSET))
     (var-set pending-max-sats (+ u1000000 (mod allocation-sats u100000000000)))
+    ;; A launch floor on roughly one bind in four. `bind-bond` only accepts one
+    ;; for the genesis bond, which began at burn height 0 and so can never be
+    ;; set up in simnet -- this is the only place the check in `stake` gets
+    ;; exercised at all. Most binds are left floor-free on purpose: a floor on
+    ;; every one of them blocks nearly every lock, and an unstaked pool leaves
+    ;; the epoch and reward machinery untested, which is worth far more than
+    ;; this one comparison.
+    (var-set pending-min-sats (if (is-eq (mod allocation-sats u4) u0)
+      (mod allocation-sats u2000)
+      u0
+    ))
     (var-set pending-start-height start)
     (var-set pending-unlock-height (+ start u3000))
     ;; The notice runs from here, same as `bind-bond`.
@@ -102,6 +117,7 @@
     (asserts! (not (var-get finished)) ERR_ALREADY_UNSTAKED)
     (asserts! (> eligible u0) ERR_NOTHING_DEPOSITED)
     (asserts! (> sats u0) ERR_INSUFFICIENT_STX)
+    (asserts! (get meets-floor preview) ERR_BELOW_LAUNCH_FLOOR)
     (asserts! (>= burn-block-height (stake-window-start)) ERR_TOO_EARLY)
     (asserts! (< burn-block-height (var-get pending-start-height)) ERR_TOO_LATE)
     (asserts! (>= burn-block-height (+ (var-get bound-at-height) BIND_NOTICE))

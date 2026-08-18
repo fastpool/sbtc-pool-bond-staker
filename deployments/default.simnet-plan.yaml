@@ -92,6 +92,11 @@ plan:
       path: contracts/bond-bridge.clar
       clarity-version: 6
     - transaction-type: emulated-contract-publish
+      contract-name: esbee-dao
+      emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
+      path: contracts/esbee-dao.clar
+      clarity-version: 6
+    - transaction-type: emulated-contract-publish
       contract-name: fastpool-signer-manager
       emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
       path: ../fastpool-pox-5/contracts/fastpool-signer-manager.clar

@@ -49,3 +49,10 @@ epoch = "4.0"
 path = "contracts/bond-bridge.clar"
 clarity_version = 6
 epoch = "4.0"
+
+# The pool's operator, held by its members. Deployed after `bond-staker`, which
+# it calls; `bond-staker` does not know about it.
+[contracts.esbee-dao]
+path = "contracts/esbee-dao.clar"
+clarity_version = 6
+epoch = "4.0"

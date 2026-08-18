@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img"
+     aria-labelledby="title desc">
+  <title id="title">Esbee DAO</title>
+  <desc id="desc">A honeycomb cell whose inner walls form an S and a B.</desc>
+
+  <style>
+    /* The mark carries its own palette, and inverts with the viewer's theme
+       so it sits on a page without a plate behind it. */
+    :root { color-scheme: light dark; }
+    .cell   { fill: none; stroke: #1c1a17; stroke-width: 9; }
+    .comb   { fill: none; stroke: #1c1a17; stroke-width: 9; opacity: .16; }
+    .letter { fill: none; stroke: #d1620a; stroke-width: 13;
+              stroke-linecap: round; stroke-linejoin: round; }
+    .stripe { fill: #1c1a17; }
+    @media (prefers-color-scheme: dark) {
+      .cell, .comb { stroke: #f2eee6; }
+      .letter { stroke: #f08a3c; }
+      .stripe { fill: #f2eee6; }
+    }
+  </style>
+
+  <!-- Neighbouring cells, hinted: a hive is never one cell. -->
+  <g class="comb">
+    <path d="M128 8 187 42 187 110 128 144 69 110 69 42Z" transform="translate(0 -74)"/>
+    <path d="M128 8 187 42 187 110 128 144 69 110 69 42Z" transform="translate(0 174)"/>
+  </g>
+
+  <!-- The cell itself. -->
+  <path class="cell" d="M128 24 199 65 199 147 128 188 57 147 57 65Z"/>
+
+  <!-- S: drawn along the cell's own diagonals, so it reads as comb structure
+       before it reads as a letter. -->
+  <path class="letter" d="M150 74 106 74 106 106 150 106 150 138 106 138"/>
+
+  <!-- B: the upright plus two bowls, sharing the S's baseline grid. -->
+  <g class="letter" transform="translate(6 0)">
+    <path d="M96 74 96 138"/>
+    <path d="M96 74 126 74 134 90 126 106 96 106"/>
+    <path d="M96 106 130 106 138 122 130 138 96 138"/>
+  </g>
+
+  <!-- Three bands: a bee, once you have seen it. -->
+  <g class="stripe" opacity=".55">
+    <rect x="118" y="196" width="20" height="6" rx="3"/>
+    <rect x="122" y="208" width="12" height="6" rx="3"/>
+    <rect x="125" y="220" width="6" height="6" rx="3"/>
+  </g>
+</svg>
