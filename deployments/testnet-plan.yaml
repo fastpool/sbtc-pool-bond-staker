@@ -1,15 +1,3 @@
-# TEMPLATE -- regenerate with your own address before applying:
-#
-#     pnpm run build:testnet
-#     pnpm run plan:testnet ST3YOUR…DEPLOYER
-#
-# Every <DEPLOYER> below has to be the account that publishes the contracts:
-# `initialize` only accepts the pool's own deployer, so publishing under one
-# identity and initializing under another leaves the pool unusable.
-#
-# The pool is published as `vault-1` on testnet: pox-5 keys a bond's allowlist
-# on the staker's principal, and that is the name the grants spell. To use a
-# different one, pass the same `-- --staker-name` to both commands.
 ---
 id: 0
 name: Testnet deployment
@@ -22,25 +10,25 @@ plan:
     transactions:
     - transaction-type: contract-publish
       contract-name: bond-treasury
-      expected-sender: <DEPLOYER>
+      expected-sender: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM
       cost: 50000
       path: build/testnet/bond-treasury.clar
       clarity-version: 6
     - transaction-type: contract-publish
       contract-name: vault-1
-      expected-sender: <DEPLOYER>
+      expected-sender: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM
       cost: 734330
       path: build/testnet/vault-1.clar
       clarity-version: 6
     - transaction-type: contract-publish
       contract-name: bond-bridge
-      expected-sender: <DEPLOYER>
+      expected-sender: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM
       cost: 208580
       path: build/testnet/bond-bridge.clar
       clarity-version: 6
     - transaction-type: contract-publish
       contract-name: esbee-dao
-      expected-sender: <DEPLOYER>
+      expected-sender: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM
       cost: 146210
       path: build/testnet/esbee-dao.clar
       clarity-version: 6
@@ -56,12 +44,12 @@ plan:
     # pox-5 allows, which a voting period, a delay and a quorum cannot be relied
     # on to hit. The DAO joins as a second operator in the next batch.
     - transaction-type: contract-call
-      contract-id: <DEPLOYER>.vault-1
-      expected-sender: <DEPLOYER>
+      contract-id: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM.vault-1
+      expected-sender: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM
       method: initialize
       parameters:
         - "'ST1B38CGQRPXEMRH7B66VXTS22DQTNMSW4YJJ7QK1.signer-manager"
-        - "'<DEPLOYER>"
+        - "'STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM"
       cost: 50000
     epoch: '4.0'
   - id: 2
@@ -75,11 +63,11 @@ plan:
     # call *from the DAO*, by vote; leaving both seated is the right state for a
     # testnet run, since only the keyed operator can bind a bond.
     - transaction-type: contract-call
-      contract-id: <DEPLOYER>.vault-1
-      expected-sender: <DEPLOYER>
+      contract-id: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM.vault-1
+      expected-sender: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM
       method: update-operator
       parameters:
-        - "'<DEPLOYER>.esbee-dao"
+        - "'STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM.esbee-dao"
         - "true"
       cost: 50000
     epoch: '4.0'
