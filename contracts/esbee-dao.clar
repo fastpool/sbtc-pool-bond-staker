@@ -18,7 +18,7 @@
 ;;
 ;;     bond-staker.update-operator(.esbee-dao, true)     ;; sitting operator
 ;;     bond-staker.update-operator(<old key>, false)     ;; from the DAO, or a
-;;                                                       ;; second operator
+;;;;                                                        second operator
 ;;
 ;; `bond-staker` checks `tx-sender`, so every call out of here is wrapped in
 ;; `as-contract?` -- that is what makes this contract, rather than the member
@@ -244,15 +244,17 @@
       ERR_NO_LIVE_EPOCH
     )
 
-    (map-set proposals id (merge fields {
-      proposer: tx-sender,
-      epoch: (current-epoch),
-      created-at: burn-block-height,
-      voting-ends-at: (+ burn-block-height VOTING_PERIOD),
-      yes: u0,
-      no: u0,
-      executed: false,
-    }))
+    (map-set proposals id
+      (merge fields {
+        proposer: tx-sender,
+        epoch: (current-epoch),
+        created-at: burn-block-height,
+        voting-ends-at: (+ burn-block-height VOTING_PERIOD),
+        yes: u0,
+        no: u0,
+        executed: false,
+      })
+    )
     (var-set proposal-count (+ id u1))
     (print (merge { topic: "propose" } (unwrap-panic (map-get? proposals id))))
     (ok id)
@@ -348,16 +350,14 @@
 
     (map-set proposals id
       (merge proposal {
-        yes: (+ (get yes proposal)
-          (if support
-            weight
-            u0
-          )),
-        no: (+ (get no proposal)
-          (if support
-            u0
-            weight
-          )),
+        yes: (+ (get yes proposal) (if support
+          weight
+          u0
+        )),
+        no: (+ (get no proposal) (if support
+          u0
+          weight
+        )),
       })
     )
     (let ((result {
@@ -410,24 +410,20 @@
 
 (define-public (execute-trust-signer (id uint))
   (let ((proposal (try! (authorize-execution id "trust-signer"))))
-    (ok (try! (as-contract?
-      ()
-      (try!
-        (contract-call? .bond-staker trust-signer-manager
-          (unwrap-panic (get code-hash proposal))
-        ))
+    (ok (try! (as-contract? ()
+      (try! (contract-call? .bond-staker trust-signer-manager
+        (unwrap-panic (get code-hash proposal))
+      ))
     )))
   )
 )
 
 (define-public (execute-distrust-signer (id uint))
   (let ((proposal (try! (authorize-execution id "distrust-signer"))))
-    (ok (try! (as-contract?
-      ()
-      (try!
-        (contract-call? .bond-staker distrust-signer-manager
-          (unwrap-panic (get code-hash proposal))
-        ))
+    (ok (try! (as-contract? ()
+      (try! (contract-call? .bond-staker distrust-signer-manager
+        (unwrap-panic (get code-hash proposal))
+      ))
     )))
   )
 )
@@ -447,37 +443,29 @@
       )
       ERR_WRONG_TARGET
     )
-    (ok (try! (as-contract?
-      ()
-      (try!
-        (contract-call? .bond-staker update-bond-registration manager
-          old-manager
-        ))
+    (ok (try! (as-contract? ()
+      (try! (contract-call? .bond-staker update-bond-registration manager old-manager))
     )))
   )
 )
 
 (define-public (execute-operator-change (id uint))
   (let ((proposal (try! (authorize-execution id "operator-change"))))
-    (ok (try! (as-contract?
-      ()
-      (try!
-        (contract-call? .bond-staker update-operator
-          (unwrap-panic (get target proposal))
-          (unwrap-panic (get enabled proposal))
-        ))
+    (ok (try! (as-contract? ()
+      (try! (contract-call? .bond-staker update-operator
+        (unwrap-panic (get target proposal))
+        (unwrap-panic (get enabled proposal))
+      ))
     )))
   )
 )
 
 (define-public (execute-sweep (id uint))
   (let ((proposal (try! (authorize-execution id "sweep"))))
-    (ok (try! (as-contract?
-      ()
-      (try!
-        (contract-call? .bond-staker sweep-unattributed-principal
-          (unwrap-panic (get target proposal))
-        ))
+    (ok (try! (as-contract? ()
+      (try! (contract-call? .bond-staker sweep-unattributed-principal
+        (unwrap-panic (get target proposal))
+      ))
     )))
   )
 )

@@ -273,10 +273,7 @@
     (at uint)
     (size uint)
   )
-  (buff-to-uint-le (unwrap-panic (as-max-len?
-    (default-to 0x00 (slice? tx at (+ at size)))
-    u16
-  )))
+  (buff-to-uint-le (unwrap-panic (as-max-len? (default-to 0x00 (slice? tx at (+ at size))) u16)))
 )
 
 ;; A bitcoin varint: one byte under 253, otherwise a marker and 2, 4 or 8 bytes.
@@ -349,15 +346,11 @@
               ;; The parent's txid as the transaction carries it, which is the
               ;; internal order `get-bitcoin-tx-output?` returns -- so the two
               ;; compare directly, with no reversal.
-              txid: (unwrap-panic (as-max-len?
-                (default-to 0x (slice? tx at (+ at u32)))
-                u32
-              )),
+              txid: (unwrap-panic (as-max-len? (default-to 0x (slice? tx at (+ at u32))) u32)),
               index: (read-le tx (+ at u32) u4),
             })
             u8
-          )
-        ),
+          )),
       })
     )
   )
@@ -379,12 +372,14 @@
     )
     (if (or (is-eq (get value count) u0) (> (get value count) MAX_INPUTS))
       none
-      (some (get inputs (fold read-input INPUT_SLOTS {
-        tx: tx,
-        cursor: (get next count),
-        left: (get value count),
-        inputs: (list),
-      })))
+      (some (get inputs
+        (fold read-input INPUT_SLOTS {
+          tx: tx,
+          cursor: (get next count),
+          left: (get value count),
+          inputs: (list),
+        })
+      ))
     )
   )
 )
@@ -471,7 +466,11 @@
       (if (and
           ;; p2sh, and the two p2sh-wrapped segwit shapes, which are p2sh on
           ;; the chain and differ only in what the redeem script says.
-          (or (is-eq version 0x01) (is-eq version 0x02) (is-eq version 0x03))
+          (or
+            (is-eq version 0x01)
+            (is-eq version 0x02)
+            (is-eq version 0x03)
+          )
           short
         )
         ;; OP_HASH160 <20> OP_EQUAL
@@ -611,14 +610,10 @@
         ;; again in the pass below, along with every other input. Here it only
         ;; has to be refused early, so an unrelated transaction cannot pick out
         ;; a script for the announcement lookup.
-        (named (asserts! (is-eq (get txid funding) (get txid first))
-          ERR_PARENT_MISMATCH
-        ))
+        (named (asserts! (is-eq (get txid funding) (get txid first)) ERR_PARENT_MISMATCH))
         ;; An output locked to something longer than the longest address shape
         ;; is not an address this contract can have taken an announcement for.
-        (script (unwrap! (as-max-len? (get script funding) u34)
-          ERR_UNSUPPORTED_ADDRESS
-        ))
+        (script (unwrap! (as-max-len? (get script funding) u34) ERR_UNSUPPORTED_ADDRESS))
         (checked (fold check-input INPUT_INDEXES {
           inputs: inputs,
           parents: parents,
@@ -626,8 +621,12 @@
           error: CHECK_OK,
         }))
       )
-      (asserts! (not (is-eq (get error checked) CHECK_MALFORMED)) ERR_MALFORMED_TX)
-      (asserts! (not (is-eq (get error checked) CHECK_PARENT)) ERR_PARENT_MISMATCH)
+      (asserts! (not (is-eq (get error checked) CHECK_MALFORMED))
+        ERR_MALFORMED_TX
+      )
+      (asserts! (not (is-eq (get error checked) CHECK_PARENT))
+        ERR_PARENT_MISMATCH
+      )
       (asserts! (not (is-eq (get error checked) CHECK_FOREIGN)) ERR_FOREIGN_INPUT)
       (ok script)
     )
@@ -770,9 +769,7 @@
     (asserts!
       (or
         (is-eq tx-sender member)
-        (>= burn-block-height
-          (+ (get committed-at-height commitment) COMMIT_TTL)
-        )
+        (>= burn-block-height (+ (get committed-at-height commitment) COMMIT_TTL))
       )
       ERR_ANNOUNCEMENT_LIVE
     )
@@ -846,8 +843,7 @@
     ;; claim that address -- free again, since the owner's own announcement
     ;; had been completed or had lapsed -- and be credited for someone else's
     ;; bitcoin. Announcing first is the one thing they cannot do after the fact.
-    (asserts!
-      (< (get announced-at-height claim) (get sweep-burn-height swept))
+    (asserts! (< (get announced-at-height claim) (get sweep-burn-height swept))
       ERR_ANNOUNCED_TOO_LATE
     )
     ;; A deposit is credited for what arrived, not for what was announced.
@@ -882,9 +878,7 @@
     ;; The shortfall never arrived, so the room it was holding goes back to the
     ;; pool rather than staying reserved against a deposit that is now closed.
     (if (< credit announced)
-      (try! (contract-call? .bond-staker abandon-bridged-deposit
-        (- announced credit)
-      ))
+      (try! (contract-call? .bond-staker abandon-bridged-deposit (- announced credit)))
       true
     )
     ;; Hand the STX leg over first, so the ledger holds it before it counts it.

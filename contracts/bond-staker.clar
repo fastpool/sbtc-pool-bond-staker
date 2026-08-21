@@ -994,7 +994,7 @@
 
       (var-set pending-bond-index index)
       (var-set pending-max-sats allocation-sats)
-    (var-set pending-min-sats min-sats)
+      (var-set pending-min-sats min-sats)
       (var-set pending-stx-value-ratio (get stx-value-ratio bond))
       (var-set pending-min-ustx-ratio (get min-ustx-ratio bond))
       (var-set pending-start-height start-height)
@@ -1649,9 +1649,7 @@
       ;; rather than accumulated -- see `total-credited`. `credit-offset`
       ;; carries the part of it that belongs to shares which have already
       ;; left, so the recomputation cannot fall below what was recognised.
-      (credited (+ (/ (* shares next-index) PRECISION)
-        (get credit-offset record)
-      ))
+      (credited (+ (/ (* shares next-index) PRECISION) (get credit-offset record)))
       (recognized (- credited (get credited record)))
     )
     (asserts! (> recognized u0) ERR_NOTHING_TO_CLAIM)
@@ -2336,23 +2334,23 @@
 )
 
 ;;; Simnet-only: the fuzzing surface
-;;;
+;;; 
 ;;; What follows this note in `contracts/bond-staker.clar` -- and is absent
 ;;; from every build under `build/<network>/`, which is why there may be
 ;;; nothing after it here -- is the surface Rendezvous reads: the invariants,
 ;;; the properties, and stand-ins for the three entry points that reach pox-5.
-;;;
+;;; 
 ;;; Each form carries `;; #[env(simnet)]`. Clarinet strips those from any
 ;;; publish source, and `scripts/build-network.mjs` strips them on the way into
 ;;; `build/`, so none of it reaches a chain. `clarinet check` compiles this
 ;;; contract both with and without them, which is what makes it safe to keep
 ;;; the two in one file.
 
-;;;
+;;; 
 ;;; They are here rather than in a generated harness because Rendezvous reads
 ;;; invariants and properties out of the contract under test, and a copy that
 ;;; has to be concatenated in is a copy that can drift from what it constrains.
-;;;
+;;; 
 ;;; `harness-bind`, `harness-lock` and `harness-release` stand in for the three
 ;;; entry points that reach pox-5. They are needed because a protocol bond can
 ;;; only be created by pox-5's bond admin -- a boot address no simnet wallet
@@ -2360,7 +2358,7 @@
 ;;; for more than the first bond. Without them the fuzzer would only ever see
 ;;; an unbound pool. Everything the invariants actually constrain is untouched
 ;;; production code.
-;;;
+;;; 
 ;;; Two timings are shrunk so a run reaches the late states: a bond starts
 ;;; within 200 burn blocks rather than months out, and its term runs 3000 burn
 ;;; blocks rather than 12 reward cycles. Epoch *closure* is left alone: it runs
@@ -2408,8 +2406,8 @@
         ;; has to be a contract, since that is what the trust list keys on.
         (map-set operators DEPLOYER true)
         (var-set signer-manager .bond-treasury)
-        (map-set trusted-signers
-          (unwrap-panic (contract-hash? .bond-treasury)) u0
+        (map-set trusted-signers (unwrap-panic (contract-hash? .bond-treasury))
+          u0
         )
         (var-set initialized true)
         (var-set pending-stx-value-ratio (+ u1 (mod ratio u1000000)))
@@ -2426,10 +2424,11 @@
     ;; every one of them blocks nearly every lock, and an unstaked pool leaves
     ;; the epoch and reward machinery untested, which is worth far more than
     ;; this one comparison.
-    (var-set pending-min-sats (if (is-eq (mod allocation-sats u4) u0)
-      (mod allocation-sats u2000)
-      u0
-    ))
+    (var-set pending-min-sats
+      (if (is-eq (mod allocation-sats u4) u0)
+        (mod allocation-sats u2000)
+        u0
+      ))
     (var-set pending-start-height start)
     (var-set pending-unlock-height (+ start u3000))
     ;; The notice runs from here, same as `bind-bond`.
@@ -2465,17 +2464,14 @@
 
     (if (> sats custodied)
       (begin
-        (try! (contract-call? .bond-treasury payout (- sats custodied)
-          current-contract
-        ))
+        (try! (contract-call? .bond-treasury payout (- sats custodied) current-contract))
         (try! (as-contract?
           ((with-ft 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
             "sbtc-token" (- sats custodied)
           ))
-          (try!
-            (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
-              transfer (- sats custodied) tx-sender .bond-escrow none
-            ))
+          (try! (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
+            transfer (- sats custodied) tx-sender .bond-escrow none
+          ))
         ))
       )
       (if (< sats custodied)
@@ -2487,11 +2483,9 @@
             ((with-ft 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
               "sbtc-token" (- custodied sats)
             ))
-            (try!
-              (contract-call?
-                'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token transfer
-                (- custodied sats) tx-sender .bond-treasury none
-              ))
+            (try! (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
+              transfer (- custodied sats) tx-sender .bond-treasury none
+            ))
           ))
         )
         true
@@ -2554,18 +2548,16 @@
 
     (try! (contract-call? .bond-escrow release sats current-contract))
     (try! (as-contract?
-      ((with-ft 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
-        "sbtc-token" sats
+      ((with-ft 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token "sbtc-token"
+        sats
       ))
-      (try!
-        (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
-          transfer sats tx-sender .bond-treasury none
-        ))
+      (try! (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
+        transfer sats tx-sender .bond-treasury none
+      ))
     ))
     (ok sats)
   )
 )
-
 
 ;; `unstake-sbtc-early` without pox-5.
 ;;
@@ -2597,10 +2589,9 @@
         ((with-ft 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
           "sbtc-token" sats
         ))
-        (try!
-          (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
-            transfer sats tx-sender .bond-treasury none
-          ))
+        (try! (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
+          transfer sats tx-sender .bond-treasury none
+        ))
       ))
       (ok booked)
     )
@@ -2631,8 +2622,8 @@
 ;; A reward payment landing on the pool, as the signer manager would make it.
 ;; #[env(simnet)]
 (define-public (harness-pay-rewards (amount uint))
-  (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
-    transfer amount tx-sender current-contract none
+  (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token transfer
+    amount tx-sender current-contract none
   )
 )
 
@@ -2660,7 +2651,8 @@
 ;; operator's sweep can reach.
 ;; #[env(simnet)]
 (define-read-only (invariant-sweep-cannot-reach-principal)
-  (<= (+ (get-unattributed-principal)
+  (<=
+    (+ (get-unattributed-principal)
       (+ (var-get queued-sats)
         (+ (var-get released-sats) (var-get withdrawing-sats))
       ))
@@ -2762,7 +2754,8 @@
 (define-read-only (invariant-member-shares-fit-the-epoch (member principal))
   (match (get-settled-member member)
     record (match (map-get? epochs (get settled-epoch record))
-      current (<= (get shares record) (get total-shares current))
+      current
+      (<= (get shares record) (get total-shares current))
       ;; No epoch under that index yet: the member cannot hold shares in it.
       (is-eq (get shares record) u0)
     )
