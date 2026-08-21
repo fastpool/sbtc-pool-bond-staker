@@ -1,14 +1,16 @@
-// Build the Rendezvous harness contract.
+// Build the Rendezvous harness contract for the archived v1 pool.
 //
 // `rv` fuzzes a contract that is deployed by a Clarinet manifest, so the
 // invariants have to live inside the contract under test. Rather than carry
 // them in the production source, this script concatenates
 //
-//   contracts/bond-staker.clar          (verbatim, byte for byte)
-//   rendezvous/bond-staker.harness.clar (invariants, properties, stand-ins)
+//   v1/contracts/bond-staker.clar          (verbatim, byte for byte)
+//   v1/rendezvous/bond-staker.harness.clar (invariants, properties, stand-ins)
 //
-// into rendezvous/harnesses/bond-staker.clar, which Clarinet-bond-staker.toml
-// deploys under the name `bond-staker`.
+// into v1/rendezvous/harnesses/bond-staker.clar, which
+// v1/Clarinet-bond-staker.toml deploys under the name `bond-staker`.
+//
+// Same script as scripts/build-rendezvous.mjs, rooted at v1/ instead.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";

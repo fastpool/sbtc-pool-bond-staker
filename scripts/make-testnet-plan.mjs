@@ -24,7 +24,7 @@ const DEFAULT_MANAGER = "ST1B38CGQRPXEMRH7B66VXTS22DQTNMSW4YJJ7QK1.signer-manage
 // What the pool is called on testnet, because that is the name its allowlist
 // grants spell. `build-network.mjs` publishes it under the same name by
 // default; the two have to agree or the plan points at a file that is not there.
-const STAKER = "vault-1";
+const STAKER = "vault-2";
 
 const usage =
   "usage: node scripts/make-testnet-plan.mjs <deployer-address> [signer-manager] [--staker-name <name>]\n" +
@@ -61,9 +61,20 @@ if (!template && !/^S[TN][0-9A-HJKMNP-Z]{38,40}$/.test(deployer ?? "")) {
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 // Dependency order, which is also the order Clarinet publishes them in: the
-// pool calls the treasury, `bond-bridge` calls both, and the DAO calls the
-// pool. Nothing calls the DAO, so it goes last.
-const CONTRACTS = ["bond-treasury", staker, "bond-bridge", "esbee-dao"];
+// pool calls the treasury, the bridge calls both, and the DAO calls the pool.
+// Nothing calls the DAO, so it goes last.
+//
+// The three siblings carry the same `-2` suffix `build:testnet` gave them: a
+// contract name cannot be reused at an address, and the first deployment took
+// all four of the unsuffixed ones.
+const SUFFIX = "-2";
+const DAO = `esbee-dao${SUFFIX}`;
+const CONTRACTS = [
+  `bond-treasury${SUFFIX}`,
+  staker,
+  `bond-bridge${SUFFIX}`,
+  DAO,
+];
 
 for (const name of CONTRACTS) {
   if (!existsSync(join(root, "build", "testnet", `${name}.clar`))) {
@@ -100,9 +111,10 @@ const header = template
 # \`initialize\` only accepts the pool's own deployer, so publishing under one
 # identity and initializing under another leaves the pool unusable.
 #
-# The pool is published as \`vault-1\` on testnet: pox-5 keys a bond's allowlist
-# on the staker's principal, and that is the name the grants spell. To use a
-# different one, pass the same \`-- --staker-name\` to both commands.
+# The pool is published as \`vault-2\` on testnet: pox-5 keys a bond's allowlist
+# on the staker's principal, and the grants spell \`vault-1\` and \`vault-2\`.
+# \`vault-1\` is already published, so \`vault-2\` is the one left. To use another
+# name, pass the same \`-- --staker-name\` to both commands.
 `
   : "";
 
@@ -152,7 +164,7 @@ ${publish}
       expected-sender: ${deployer}
       method: update-operator
       parameters:
-        - "'${deployer}.esbee-dao"
+        - "'${deployer}.${DAO}"
         - "true"
       cost: 50000
     epoch: '4.0'
@@ -164,7 +176,7 @@ writeFileSync(out, plan);
 console.log(`wrote ${out}${template ? " (template)" : ""}
   deployer / operator : ${deployer}
   pool contract       : ${deployer}.${staker}
-  operator DAO        : ${deployer}.esbee-dao
+  operator DAO        : ${deployer}.${DAO}
   signer manager      : ${manager}
 
   clarinet deployments apply --testnet --manifest-path Clarinet-testnet.toml \\

@@ -16,8 +16,13 @@ the three contracts under `contracts/` at that commit:
     bond-staker.clar
     bond-bridge.clar
 
-Not in scope, and not deployed: `tests/`, `rendezvous/` (fuzzing harness and
-its escrow stand-in), `scripts/`, `ui/`.
+Not in scope, and not deployed: `tests/`, `rendezvous/` (the escrow stand-in
+the fuzzer uses), the `Simnet-only` section at the foot of `bond-staker.clar`
+(stripped from every build — see
+[rendezvous/README.md](rendezvous/README.md)), `scripts/`, `lib/` (bitcoin
+encoding helpers the tests and the mainnet simulation share), and `v1/` (a
+separate archived project with its own manifest and its own README; nothing
+here reads it).
 
 `contracts/` holds the simnet flavour of the two protocol addresses — see
 [Networks](#networks). A deployment is byte-identical apart from those
@@ -49,9 +54,20 @@ is the exception: pox-5 locks the *staker's* STX, so the pool holds it.
 
 Shares are struck when a bond is staked or rolled, one share per committed
 satoshi, mirroring how pox-5 weights bond rewards. They are held separately
-from the deposit because the two come apart: a member who has left keeps their
-shares in the epoch they were part of — and so still collects that bond's final
-rewards when they arrive — while their sats and STX are already claimable.
+from the deposit because the two come apart, and they come apart in opposite
+directions depending on how a member leaves.
+
+**Leaving at a roll** — `request-exit`, or a position a roll could not carry —
+keeps the shares. Their sats stayed staked for the whole of that bond's term,
+so pox-5 pays on them to the end; the member holds their shares in the epoch
+they were part of until it settles, and collects that bond's final rewards when
+they arrive, while their sats and STX are already claimable.
+
+**Leaving early** — `unstake-sbtc-early` — does not. pox-5 drops the unstaked
+sats from the current reward cycle as well as every later one, so nothing more
+is earned on them by anyone; the member's shares are struck out of the epoch in
+the same call, and the epoch's `total-shares` with them. Nothing accrues to a
+share that is no longer backed by staked sats.
 
 ## Epochs
 
@@ -92,18 +108,44 @@ one, and the roll after that is a whole bond term further on.
 | `bind-bond` | operator, once per bond | after the bond admin allowlists this contract. Opens deposits |
 | `deposit` | anyone | while a bond is bound and has not started |
 | `deposit-stx` | anyone | to raise the STX behind the pool's sats |
-| `bond-bridge.commit-btc-deposit` / `reveal-btc-deposit` | anyone | to join with L1 bitcoin, paying the STX leg |
-| `bond-bridge.confirm-btc-deposit` | anyone | once the sBTC signers have swept it |
+| `bond-bridge.commit-btc-address` / `reveal-btc-address` | anyone | to join with L1 bitcoin, naming the address it will come from and paying the STX leg |
+| `bond-bridge.complete-btc-deposit` | anyone | once the sBTC signers have swept it |
 | `bond-bridge.claim-principal-to-btc` | a member | to take released principal out as bitcoin |
 | `withdraw` | a depositor | until their deposit is staked |
 | `stake` | **permissionless** | 288 burn blocks before the bound bond starts. First call opens epoch 0, later calls roll |
 | `request-exit` / `cancel-exit` | a member | released at the next roll |
+| `unstake-sbtc-early` | a member | committed sBTC back now, at a cost — see [Leaving before the term is up](#leaving-before-the-term-is-up) |
 | `unstake-sbtc` | **permissionless** | once the live bond's 12 cycles are up. Winds the pool down |
 | `sync-rewards` | anyone | recognises sBTC that has arrived |
 | `claim-rewards` / `claim-principal` | anyone, paid to the member | as rewards settle / as principal is released |
 
 `stake` and `unstake-sbtc` being permissionless is deliberate: the operator
 chooses bonds and signers, but cannot strand the pool by doing nothing.
+
+## Leaving before the term is up
+
+`request-exit` settles at the next roll, and `unstake-sbtc` waits for the bond
+to run out. `unstake-sbtc-early` does neither: it calls pox-5's own
+`unstake-sbtc`, which takes any amount at any point in a bond, and the sats are
+in the treasury and claimable in the same transaction. Partial or whole.
+
+Three things follow from that, and `get-early-unstake-preview` reports all of
+them before the fact:
+
+- **The STX leg does not come with it.** pox-5 leaves locked STX alone on an
+  unstake and frees it on the bond's normal unlock cycle. A member taking their
+  whole position out is marked as exiting, and the roll releases their STX the
+  way it would have released both legs.
+- **Rewards the pool has not recognised yet are forfeited.** sBTC is split by
+  shares at the moment `sync-rewards` recognises it, and the shares are gone the
+  moment the call returns. `sync-rewards` is permissionless, so calling it first
+  banks everything that has actually arrived.
+- **The rest of the bond is forfeited outright**, because pox-5 drops the
+  unstaked sats from the current reward cycle as well as every later one.
+
+Nobody else pays for it: the pool's reward stream shrinks by exactly the shares
+that left, and the remaining members' slice of what still arrives grows to
+match. No member is diluted by someone else's exit, and none subsidises one.
 
 ## A roll that does not fit
 
@@ -143,53 +185,112 @@ missed window costs one bond period rather than the pool's whole future.
 An sBTC deposit is a bare mint: the signers credit whichever principal the
 bitcoin transaction named and call nothing, so a deposit addressed to the pool
 arrives with no record of who sent it. `bond-bridge` has the member tie it
-themselves, in advance:
+themselves, in advance — by naming the **address** the bitcoin will come from:
 
-1. `commit-btc-deposit(digest, sats)` — `digest` is
-   `get-deposit-digest(txid, vout, salt)`, a hash of the transaction they are
-   about to make, with a salt they keep. This takes the STX leg — the one Stacks
+1. `commit-btc-address(digest, sats)` — `digest` is
+   `get-address-digest(address, salt)`, a hash of the address they will send
+   from, with a salt they keep. This takes the STX leg — the one Stacks
    transaction they were always going to have to send, since the STX cannot come
    from bitcoin — and holds the pool's room.
-2. `reveal-btc-deposit(txid, vout, salt)` — names the transaction and claims its
-   txid, one bitcoin block after the commit at the earliest.
-3. They broadcast, addressing the bitcoin to `bond-treasury`.
+2. `reveal-btc-address(address, salt)` — names the address and takes it, one
+   bitcoin block after the commit at the earliest.
+3. They send to `bond-treasury`, **from that address and no other**.
 4. The sBTC signers sweep it and mint to the treasury.
-5. `confirm-btc-deposit(txid, vout)` — permissionless. Reads the sBTC registry,
-   checks the sats landed in the treasury, and has the ledger queue them.
+5. `complete-btc-deposit(txid, vout, tx, parents)` — permissionless. `tx` is the
+   deposit transaction as bitcoin hashes it (no witnesses) and `parents` is the
+   transaction behind each of its inputs, in order. Checks the sats landed in
+   the treasury, proves which address funded them, and has the ledger queue
+   them.
 
-**The order is the security argument.** A txid announced in the clear is exposed
-twice: in the Stacks mempool before the announcement confirms, and in the
-bitcoin mempool if the transaction is broadcast early. Either window lets an
-onlooker claim the txid first and be credited for someone else's bitcoin.
-
-The commit closes the first — a salted digest tells a watcher nothing. The
-reveal closes the second by happening *before* the broadcast: the txid reaches
-Stacks already claimed, and a watcher cannot open a commitment to a txid they
-never knew. First reveal takes the txid. The `REVEAL_DELAY` of one block stops
-a commit and its reveal sharing a block, which would let an onlooker pair their
+**The order is the security argument**, and it is the same one version 1 made
+about a txid. A claim made in the clear is exposed in the Stacks mempool before
+it confirms: an onlooker could resend the same announcement with a higher fee,
+take the address, and be credited for the bitcoin that followed. The commit
+closes that window — a salted digest names nothing — and the reveal closes the
+copy of it, since a commitment made after seeing a reveal is behind that reveal
+and first reveal takes the address. The `REVEAL_DELAY` of one block stops a
+commit and its reveal sharing a block, which would let an onlooker pair their
 own commit with the reveal they just saw.
 
-That leaves the member one rule, the same one as before moved a step later: do
-not broadcast until the reveal has confirmed.
+What the commitment cannot do is make an address secret that already is not: one
+seen anywhere on bitcoin can be committed to by anyone at any time and revealed
+first. That costs its owner nothing but the attempt — their reveal fails, they
+have sent no bitcoin, and any other address will do; a fresh one is not knowable
+at all. It costs the squatter the STX leg for as long as they hold it.
+
+So the member has one rule: do not send until the reveal has confirmed, and then
+send only from the address it revealed.
 
 Commitments are keyed by member as well as digest, so lifting someone's digest
 out of the mempool cannot stop them committing it themselves.
 
+**Why an address rather than a transaction.** A txid only exists once the
+transaction is built and signed, so version 1 needed a wallet that would sign
+without broadcasting and a member who could drive it in two halves. An address
+is something they already have, so steps 1 and 2 need nothing built and step 3
+can be any wallet, any route, a plain "send" button.
+
+### Proving whose bitcoin it was
+
+`complete-btc-deposit` decides from the bytes alone, on a chain of txids:
+
+- the sBTC registry names a txid it swept, which the signers vouch for;
+- `tx` has to deserialize to that txid, so those are its real inputs;
+- each parent has to deserialize to the txid its input names, so those are its
+  real outputs — and the one being spent carries the scriptPubKey that locked it.
+
+The deserializing is Clarity 6's `get-bitcoin-tx-output?`, which returns an
+output's `scriptPubKey` and the transaction's canonical txid, so every link in
+that chain is the node's own reading of the bytes rather than a hand-rolled
+parser's. No merkle proof and no block header: the deposit is already anchored
+by the registry, and everything else is anchored to it.
+
+Every input has to be locked to the revealed address, not merely one of them. A
+transaction funded from two addresses would otherwise be claimable by either,
+and an onlooker who saw it on bitcoin could commit to whichever of the two was
+still free. Requiring all of them leaves exactly one address that can claim a
+transaction — and the member fixed which before they sent it.
+
+Announcements are keyed by the scriptPubKey the address locks to rather than by
+the address, so the three p2sh-shaped versions of one address are one
+announcement rather than three that different members could hold.
+
+Two further rules close what an address being public would otherwise open:
+
+- an announcement must **predate the sweep** of the deposit it claims, so a
+  watcher cannot read a funding address off a swept transaction and claim it
+  after the fact;
+- a `(txid, vout)` is credited **once**, whatever is announced afterwards.
+
+What it costs is the bytes: a deposit may have at most 8 inputs, and each one
+means handing its parent over too. Nothing bounds the parents — an output three
+hundred down an exchange payout batch is read as readily as the first — and
+either serialization will do, witnesses or not, so a client can pass an
+explorer's hex through untouched. `get-funding-script` answers what a `complete`
+would make of its arguments before anyone pays for it, and `get-txid` says which
+transaction it read.
+
+### Cancelling, and what a deposit is credited
+
 Either state can be cancelled for its STX back — a commitment before the reveal
-(`cancel-btc-commitment`), an announcement until the sweep lands
-(`cancel-btc-deposit`) — by the member at any time, by anyone once it has gone
-stale. The two wait different lengths, and deliberately:
+(`cancel-btc-commitment`), an announcement afterwards (`cancel-btc-deposit`) —
+by the member at any time, by anyone once it has gone stale. The two wait
+different lengths, and deliberately:
 
 | | stale after | why |
 | --- | --- | --- |
-| commitment | `COMMIT_TTL`, 36 blocks (~6h) | nothing is in flight. The digest commits to the txid, so the transaction was built before the commit was sent, and the reveal normally follows one block later |
-| announcement | `ANNOUNCE_TTL`, 1000 blocks (~1 week) | the bitcoin may be broadcast and waiting on the signers, and must never be cancelled from under its owner |
+| commitment | `COMMIT_TTL`, 36 blocks (~6h) | nothing is in flight. Nothing has been sent, and the reveal normally follows one block later |
+| announcement | `ANNOUNCE_TTL`, 1000 blocks (~1 week) | the bitcoin may be sent and waiting on the signers, and must never be cancelled from under its owner |
 
 Both squat on allocation room while they stand, and both cost the squatter the
 STX leg for the duration — but a week of that per unrevealed commit would be a
 lot of leverage for the price.
 
-`confirm` credits **what arrived**, not what was announced. The sBTC signers
+Do not cancel a deposit already sent. Until the sweep the address can be
+committed to again, but between the two it is anyone's to take, and after it
+nothing can attribute those sats.
+
+`complete` credits **what arrived**, not what was announced. The sBTC signers
 take their bitcoin fee out of the deposit, so the mint is normally a little
 smaller than the amount sent; the shortfall's allocation room goes back to the
 pool and the member keeps the STX leg they paid, which returns to them as
@@ -220,13 +321,6 @@ deployment for a separate pool.
 The one precondition the contract cannot arrange for itself is the allowlist:
 the bond admin must have called `setup-bond` naming this contract, for the
 first bond and for every roll.
-
-## UI
-
-    pnpm run ui        # http://localhost:8080
-
-A buildless page for the whole flow — deposit with sBTC or with L1 bitcoin,
-watch the pool, claim, leave. See [ui/README.md](ui/README.md).
 
 ## Networks
 
@@ -443,12 +537,15 @@ come to about 1.24 STX for the whole plan.
 
 ### The pool's name is per network
 
-**On testnet the pool is published as `vault-1`, not `bond-staker`.** pox-5 keys
+**On testnet the pool is published as `vault-2`, not `bond-staker`.** pox-5 keys
 a bond's allowlist on the staker's *principal*, and a grant is only ever
 inserted by `setup-bond` — so a pool published under a name no grant mentions
-can never stake, and the testnet grants spell `<deployer>.vault-1`.
+can never stake. The testnet grants spell `<deployer>.vault-1` and
+`<deployer>.vault-2`, and `vault-1` is taken, so `vault-2` is the name this
+build targets. Its three siblings take a `-2` for the same reason: a contract
+name cannot be reused at an address.
 
-`build:testnet` therefore emits `build/testnet/vault-1.clar`, rewriting every
+`build:testnet` therefore emits `build/testnet/vault-2.clar`, rewriting every
 `.bond-staker` reference in the sibling contracts along with the file name; the
 plan generator and `Clarinet-testnet.toml` agree. `build:mainnet` keeps
 `bond-staker`. Nothing in `contracts/` changes, and the tests are unaffected.
@@ -479,7 +576,10 @@ that has not been created yet.
 The unit tests stand up real pox-5 bonds: simnet's bond admin is the boot
 address the pox-5 source names, so the fixture can call `setup-bond` and
 allowlist the pool. See [rendezvous/README.md](rendezvous/README.md) for how
-the fuzzing harness is put together and what it has caught.
+the fuzzing surface is put together and what it has caught.
+
+`v1/` is a separate archived project with its own manifest, tests and scripts
+(`pnpm run test:v1`, `pnpm run fuzz:invariant:v1`). It is not part of this one.
 
 The signer-manager contracts the tests stake through come from the sibling
 `fastpool-pox-5` project, referenced by relative path in `Clarinet.toml`.

@@ -1,15 +1,28 @@
+# The pool as it is deployed on testnet today.
+#
+# Every contract here is byte-for-byte what `STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM`
+# published, modulo the per-network address and name rewrites that
+# `scripts/build-network.mjs` applies on the way out -- the pool itself is
+# published there as `vault-1`.
+#
+# Kept so the running system and the one in ../contracts/ can be run and
+# diffed side by side. `v1/README.md` says what the difference is.
+#
+# `bond-bridge` and `esbee-dao` are here for the same reason as the two above:
+# the pool they call is this one. Note that this `bond-bridge` is the smaller,
+# earlier ramp -- the one on testnet today -- not the `bond-bridge` in
+# ../contracts/, which is the rewritten one the current pool uses.
+
 [project]
-name = "sbtc-pool-bond-staker"
-description = "Pooled sBTC + STX staker for pox-5 Bitcoin Staking Bonds"
+name = "sbtc-pool-bond-staker-v1"
+description = "Pooled sBTC + STX staker for pox-5 Bitcoin Staking Bonds -- archived v1"
 authors = []
 telemetry = false
-cache_dir = "./.cache"
+# Shared with the main project rather than re-fetched: the sBTC requirements
+# below are the same contracts.
+cache_dir = "../.cache"
 requirements = [
     {contract_id = 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-withdrawal'},
-    # Needed for the `sbtc_balance` entries in settings/Devnet.toml to be
-    # minted into simnet accounts: sbtc-deposit is the protocol contract that
-    # performs that genesis mint. Without it every account holds 0 sBTC and no
-    # deposit or reward test can run.
     {contract_id = 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-deposit'}
 ]
 
@@ -22,20 +35,12 @@ check_checker = { trusted_sender = false, trusted_caller = false, callee_filter 
 # Signer managers, for tests only: a bond participant has to stake through a
 # registered pox-5 signer. Sourced from the sibling fastpool-pox-5 project.
 [contracts.fastpool-signer-manager]
-path = "../fastpool-pox-5/contracts/fastpool-signer-manager.clar"
+path = "../../fastpool-pox-5/contracts/fastpool-signer-manager.clar"
 clarity_version = 6
 epoch = "4.0"
 
 [contracts.signer-manager]
-path = "../fastpool-pox-5/contracts/signer-manager.clar"
-clarity_version = 6
-epoch = "4.0"
-
-# Stands in for pox-5's custody of the staked sBTC, for fuzzing only. It is
-# reached solely from `bond-staker`'s `#[env(simnet)]` section, which is
-# stripped from every network build -- so it is deployed here and nowhere else.
-[contracts.bond-escrow]
-path = "rendezvous/bond-escrow.clar"
+path = "../../fastpool-pox-5/contracts/signer-manager.clar"
 clarity_version = 6
 epoch = "4.0"
 

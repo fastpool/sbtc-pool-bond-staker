@@ -9,28 +9,28 @@ plan:
   - id: 0
     transactions:
     - transaction-type: contract-publish
-      contract-name: bond-treasury
+      contract-name: bond-treasury-2
       expected-sender: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM
       cost: 50000
-      path: build/testnet/bond-treasury.clar
+      path: build/testnet/bond-treasury-2.clar
       clarity-version: 6
     - transaction-type: contract-publish
-      contract-name: vault-1
+      contract-name: vault-2
       expected-sender: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM
-      cost: 734330
-      path: build/testnet/vault-1.clar
+      cost: 865380
+      path: build/testnet/vault-2.clar
       clarity-version: 6
     - transaction-type: contract-publish
-      contract-name: bond-bridge
+      contract-name: bond-bridge-2
       expected-sender: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM
-      cost: 208580
-      path: build/testnet/bond-bridge.clar
+      cost: 383170
+      path: build/testnet/bond-bridge-2.clar
       clarity-version: 6
     - transaction-type: contract-publish
-      contract-name: esbee-dao
+      contract-name: esbee-dao-2
       expected-sender: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM
-      cost: 146210
-      path: build/testnet/esbee-dao.clar
+      cost: 146230
+      path: build/testnet/esbee-dao-2.clar
       clarity-version: 6
     epoch: '4.0'
   - id: 1
@@ -44,7 +44,7 @@ plan:
     # pox-5 allows, which a voting period, a delay and a quorum cannot be relied
     # on to hit. The DAO joins as a second operator in the next batch.
     - transaction-type: contract-call
-      contract-id: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM.vault-1
+      contract-id: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM.vault-2
       expected-sender: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM
       method: initialize
       parameters:
@@ -63,11 +63,11 @@ plan:
     # call *from the DAO*, by vote; leaving both seated is the right state for a
     # testnet run, since only the keyed operator can bind a bond.
     - transaction-type: contract-call
-      contract-id: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM.vault-1
+      contract-id: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM.vault-2
       expected-sender: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM
       method: update-operator
       parameters:
-        - "'STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM.esbee-dao"
+        - "'STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM.esbee-dao-2"
         - "true"
       cost: 50000
     epoch: '4.0'

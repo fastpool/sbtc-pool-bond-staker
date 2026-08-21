@@ -1,40 +1,5 @@
 ;; Bitcoin Staking Bond staker
 ;;
-;; A member may take their committed sBTC back mid-term, rather than waiting
-;; for the roll that settles `request-exit` or for the bond to run out.
-;;
-;; That is the one thing this pool does that the design before it did not, and
-;; the earlier one is kept whole under `v1/` -- same file, same contract names,
-;; without this. So
-;;
-;;     diff v1/contracts/bond-staker.clar contracts/bond-staker.clar
-;;
-;; is exactly what the power costs, and `v1/README.md` says how to run and fuzz
-;; the older one against it.
-;;
-;; What that one power touches
-;;
-;;   unstake-sbtc-early        the new entry point -- see its own comment for
-;;                             what leaving early costs the member
-;;   apply-early-unstake       its ledger half, split out so the fuzzer can
-;;                             drive the arithmetic without a bond
-;;   get-early-unstake-preview what it would return, and what it would forfeit
-;;   epochs.total-shares       shrinks when a member leaves mid-term, so
-;;                             rewards are split by what is still committed
-;;   epochs.staked-sats        carries the roll's scaling fraction, which
-;;                             `total-shares` carried before and cannot now
-;;   epochs.credit-offset      only bookkeeping: it keeps the epoch's running
-;;                             credit flat when shares leave
-;;   cancel-exit               refuses an exit that has no position behind it
-;;
-;; Why pox-5 permits this at all: its own `unstake-sbtc` takes any amount at
-;; any point in a bond and hands the sBTC straight back -- the twelve-cycle
-;; wait the older design imposed was its own policy, not the protocol's. What pox-5 does
-;; *not* do is release the STX leg early, which is why the STX still comes
-;; back at the roll here. `announce-l1-early-exit` is a different mechanism
-;; again and is not reachable from this pool: it is for native-BTC
-;; bondholders, and asserts `is-l1-lock` on a membership this pool never has.
-;;
 ;; A pooled staker for pox-5 protocol bonds. The contract is the pox-5
 ;; *staker*: it is the principal that appears on a bond's allowlist, the
 ;; principal whose sBTC pox-5 custodies for the bond term, and the principal
@@ -64,20 +29,9 @@
 ;; Shares are struck when a bond is staked or rolled, and one share is one
 ;; committed satoshi, mirroring how pox-5 itself weights bond rewards. They
 ;; are held separately from the deposit rather than derived from it because
-;; the two come apart -- and which way they come apart depends on how the
-;; member left.
-;;
-;; Leaving at a roll keeps the shares. Those sats stayed staked for the whole
-;; of that bond's term and pox-5 pays on them to the end, so the member holds
-;; their shares in the epoch they were part of until it settles -- still
-;; earning that bond's rewards as they arrive -- while their sats and STX are
-;; already claimable. That is what `tail-epoch` carries.
-;;
-;; Leaving early does not. `unstake-sbtc-early` has pox-5 drop the sats from
-;; the current reward cycle as well as every later one, so nothing further is
-;; earned on them by anyone; the member's shares leave the epoch in the same
-;; call, and `total-shares` with them. A share not backed by staked sats
-;; accrues nothing, which is what keeps the split honest for whoever stays.
+;; the two come apart: a member who has left keeps their shares in the epoch
+;; they were part of -- and so keeps earning that bond's rewards as they
+;; arrive -- while their sats and STX are already claimable.
 ;;
 ;; A roll that does not fit
 ;;
@@ -177,9 +131,6 @@
 ;;                 before the bound bond starts. The first call opens epoch 0;
 ;;                 every later call rolls the position into the next bond.
 ;;   request-exit  a member, to be released at the next roll.
-;;   unstake-sbtc-early
-;;                 a member, for committed sBTC they want back now rather
-;;                 than at the roll.
 ;;   unstake-sbtc  permissionless, once the live bond's 12 cycles have
 ;;                 elapsed. Winds the pool down for good.
 ;;   claim-*       anyone, on behalf of any member: rewards as they settle,
@@ -333,8 +284,7 @@
 ;;; Epochs
 
 ;; One record per bond the pool has staked into. Frozen at `stake`, except for
-;; the reward fields, which keep moving while the epoch is open -- and
-;; `total-shares`, which shrinks as members unstake mid-term.
+;; the reward fields, which keep moving while the epoch is open.
 (define-map epochs
   uint
   {
@@ -342,17 +292,9 @@
     first-reward-cycle: uint,
     unlock-burn-height: uint,
     staked-at-height: uint,
-    ;; What wanted in, and what fitted. `staked-sats / eligible-sats` is the
+    ;; What wanted in, and what fitted. `total-shares / eligible-sats` is the
     ;; fraction of every member's position that was carried into this epoch;
     ;; the two are equal unless the allocation or the STX floor bit.
-    ;;
-    ;; These two split a job one field used to do. `staked-sats` is what the
-    ;; roll committed, and never moves: the scaling fraction has to read the
-    ;; same for a member settling long after someone else has left as it did
-    ;; for everyone carried at the roll itself. `total-shares` is what is
-    ;; *still* committed, and is what rewards are split by --
-    ;; `unstake-sbtc-early` takes a leaver's shares out of it. Before any early
-    ;; unstake the two are equal, which is why one field once did for both.
     eligible-sats: uint,
     total-shares: uint,
     staked-sats: uint,
@@ -361,13 +303,6 @@
     ;; been credited so far.
     reward-index: uint,
     credited: uint,
-    ;; Credit that belongs to shares which have since left. `credited` is
-    ;; recomputed from `total-shares * reward-index` on every sync rather than
-    ;; accumulated -- see `total-credited` -- so it would drop the moment
-    ;; shares do, and `sync-rewards` would underflow on the next call. This
-    ;; holds the difference, which keeps the epoch's running total flat across
-    ;; an early unstake instead of running backwards.
-    credit-offset: uint,
   }
 )
 
@@ -760,12 +695,6 @@
 
 ;; The part of `amount` that epoch `epoch` had room for. One for one unless
 ;; that roll was scaled back.
-;;
-;; Measured against `staked-sats` rather than `total-shares`, which are the
-;; same number until someone leaves mid-term. The fraction is a property of the roll: every member
-;; carried by it was scaled by the same one, and a member who settles late has
-;; to be scaled by that one too, not by whatever the live share count has
-;; since fallen to.
 (define-read-only (scale-into-epoch
     (amount uint)
     (epoch uint)
@@ -773,10 +702,10 @@
   (match (map-get? epochs epoch)
     record (if (or
         (is-eq (get eligible-sats record) u0)
-        (>= (get staked-sats record) (get eligible-sats record))
+        (>= (get total-shares record) (get eligible-sats record))
       )
       amount
-      (/ (* amount (get staked-sats record)) (get eligible-sats record))
+      (/ (* amount (get total-shares record)) (get eligible-sats record))
     )
     amount
   )
@@ -799,10 +728,10 @@
   (match (map-get? epochs epoch)
     record (if (or
         (is-eq (get eligible-sats record) u0)
-        (>= (get staked-sats record) (get eligible-sats record))
+        (>= (get total-shares record) (get eligible-sats record))
       )
       u0
-      (/ (* amount (- (get eligible-sats record) (get staked-sats record)))
+      (/ (* amount (- (get eligible-sats record) (get total-shares record)))
         (get eligible-sats record)
       )
     )
@@ -846,43 +775,6 @@
       released-ustx: u0,
       queued-sats: u0,
       queued-ustx: u0,
-    }
-  )
-)
-
-;; What `unstake-sbtc-early` would do for `member` right now, and what it would
-;; cost them.
-;;
-;;   sats             the committed sBTC it would hand back
-;;   ustx-at-roll     the STX leg, which the roll releases rather than this
-;;   banked-rewards   what they have already accrued, which they keep
-;;   at-risk-rewards  reward sBTC the pool is holding but has not recognised
-;;                    yet, at their current weight -- forfeited unless
-;;                    `sync-rewards` is called first, which anyone may do
-(define-read-only (get-early-unstake-preview (member principal))
-  (match (map-get? members member)
-    stored (let (
-        (record (settle stored))
-        (live-shares (match (get-live-epoch)
-          live (get total-shares live)
-          u0
-        ))
-      )
-      {
-        sats: (get bonded-sats record),
-        ustx-at-roll: (get bonded-ustx record),
-        banked-rewards: (get pending record),
-        at-risk-rewards: (if (> live-shares u0)
-          (/ (* (get-unrecognized-rewards) (get shares record)) live-shares)
-          u0
-        ),
-      }
-    )
-    {
-      sats: u0,
-      ustx-at-roll: u0,
-      banked-rewards: u0,
-      at-risk-rewards: u0,
     }
   )
 )
@@ -1192,7 +1084,6 @@
         staked-ustx: ustx,
         reward-index: u0,
         credited: u0,
-        credit-offset: u0,
       })
       (var-set epoch-count (+ epoch u1))
 
@@ -1434,11 +1325,6 @@
       (member tx-sender)
       (epoch (unwrap! (get exit-epoch record) ERR_NOT_EXITING))
     )
-    ;; An exit that `unstake-sbtc-early` set has nothing left to come back
-    ;; to. The sats are already paid out and the shares already gone; only the
-    ;; STX leg is still waiting on the roll, and taking the request back would
-    ;; carry that STX into the next bond with no sats and no weight behind it.
-    (asserts! (> (get bonded-sats record) u0) ERR_NOTHING_DEPOSITED)
     ;; A request made during the live epoch is still ahead of its roll; an
     ;; older one has already been realised and cannot be taken back.
     (asserts! (is-eq epoch (- (var-get epoch-count) u1)) ERR_POSITION_ACTIVE)
@@ -1455,173 +1341,6 @@
       }))
       (print (merge { topic: "cancel-exit" } result))
       (ok result)
-    )
-  )
-)
-
-;; Take committed sBTC back before the bond's term is up. Everything below is
-;; the price of it.
-;;
-;; pox-5 has never required the wait. Its own `unstake-sbtc` takes any amount,
-;; at any point in a bond, and hands the sBTC straight back; the twelve-cycle
-;; wait in v1 is that contract's policy, not the protocol's. Three things
-;; follow from taking the protocol up on it, and none of them is hidden.
-;;
-;; The STX leg does not come back with it. pox-5 leaves a staker's locked STX
-;; alone on an unstake and frees it on the bond's normal unlock cycle, so there
-;; is nothing here to hand over. A member taking their whole position out is
-;; marked as exiting, and the roll releases their STX exactly as it would have
-;; released both legs had they left the ordinary way.
-;;
-;; Rewards the pool has not recognised yet are forfeited. sBTC is split by
-;; shares at the moment `sync-rewards` recognises it, and these shares are gone
-;; the moment this returns -- so a cycle that has ended but whose sBTC has not
-;; been swept in yet pays the leaver nothing. `sync-rewards` is permissionless:
-;; calling it first banks everything that has actually arrived, and
-;; `get-early-unstake-preview` reports what is still at risk.
-;;
-;; The remainder of the bond is forfeited outright, which is the substance of
-;; leaving rather than a penalty bolted on: pox-5 drops the unstaked sats from
-;; the current reward cycle as well as every later one, so nothing further is
-;; earned on them by anybody.
-;;
-;; What it does not do is cost anyone else. The pool's reward stream shrinks by
-;; exactly the shares that left, and the remaining members' slice of whatever
-;; still arrives grows to match. No member is diluted by an exit, and none
-;; subsidises one.
-;;
-;; pox-5 refuses this during a reward cycle's prepare phase, so a call can
-;; bounce on timing alone and simply be retried a few blocks later.
-(define-public (unstake-sbtc-early
-    (manager <signer-manager-trait>)
-    (sats uint)
-  )
-  (begin
-    ;; Checked up here so a mismatch reads as this contract's error rather
-    ;; than as whatever pox-5 makes of it. pox-5 refuses one too.
-    (asserts! (is-eq (contract-of manager) (var-get signer-manager))
-      ERR_INVALID_SIGNER_MANAGER
-    )
-    (let (
-        ;; The ledger moves first, so a request the *pool* refuses says why in
-        ;; its own error. The two halves are one transaction either way: if
-        ;; pox-5 says no below -- during a prepare phase, say -- none of this
-        ;; happened.
-        (booked (try! (apply-early-unstake tx-sender sats)))
-        (unstaked (try! (as-contract?
-          (
-            ;; pox-5 hands the sats to the staker, which is this contract, and
-            ;; they carry straight on to the treasury: what the pool itself
-            ;; holds has to stay reward and nothing else.
-            (with-ft 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
-            "sbtc-token" sats
-          )
-            (with-pox)
-          )
-          (let ((removed (try! (contract-call? 'ST000000000000000000002AMW42H.pox-5 unstake-sbtc
-              manager sats
-            ))))
-            (try! (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
-              transfer sats tx-sender .bond-treasury none
-            ))
-            removed
-          ))))
-      )
-      (let ((result (merge booked { pox: unstaked })))
-        (print (merge { topic: "unstake-sbtc-early" } result))
-        (ok result)
-      )
-    )
-  )
-)
-
-;; The ledger half of an early unstake: every check it makes, and every book it
-;; moves. Split out from the pox-5 call above for one reason -- the fuzzer.
-;;
-;; Rendezvous cannot create a protocol bond on simnet, so it can never reach
-;; the public entry point; the harness works around the same problem for
-;; `stake` and `unstake-sbtc` by hand-writing stand-ins. That is tolerable for
-;; state a stand-in can copy exactly, and a poor trade for the arithmetic here,
-;; which is the part worth fuzzing. So the harness calls *this*, and what it
-;; exercises is production code rather than a second copy of it.
-(define-private (apply-early-unstake
-    (member principal)
-    (sats uint)
-  )
-  (let (
-      (record (settle (unwrap! (map-get? members member) ERR_NOTHING_DEPOSITED)))
-      (live (unwrap! (get-live-epoch) ERR_NOT_STAKED))
-      (epoch (- (var-get epoch-count) u1))
-      (held (get bonded-sats record))
-      (leaving-all (is-eq sats held))
-    )
-    (asserts! (not (var-get finished)) ERR_ALREADY_UNSTAKED)
-    ;; A member already on their way out has these sats promised to the roll.
-    ;; Taking them now would leave `exiting-sats` describing a position the
-    ;; pool no longer holds.
-    (asserts! (is-none (get exit-epoch record)) ERR_ALREADY_EXITING)
-    (asserts! (> held u0) ERR_NOTHING_DEPOSITED)
-    (asserts! (> sats u0) ERR_INVALID_AMOUNT)
-    ;; Underflow guards. Every one of these is implied by the pool's own
-    ;; invariants -- a member's shares are their committed sats, and the live
-    ;; epoch's shares are the pool's -- but the arithmetic below is total
-    ;; either way rather than only in the states we believe are reachable.
-    (asserts!
-      (and
-        (<= sats held)
-        (<= sats (get shares record))
-        (<= sats (get total-shares live))
-        (<= sats (var-get bonded-sats))
-      )
-      ERR_INVALID_AMOUNT
-    )
-
-    (let ((shares-left (- (get total-shares live) sats)))
-      ;; Future rewards are split by what is still committed. The epoch's
-      ;; running credit is held flat across the change -- see `credit-offset`.
-      (map-set epochs epoch
-        (merge live {
-          total-shares: shares-left,
-          credit-offset: (- (get credited live)
-            (/ (* shares-left (get reward-index live)) PRECISION)
-          ),
-        })
-      )
-      (map-set members member
-        (merge record {
-          shares: (- (get shares record) sats),
-          bonded-sats: (- held sats),
-          released-sats: (+ (get released-sats record) sats),
-          ;; A member with nothing committed left is on their way out, so the
-          ;; roll frees the STX leg that cannot be handed back here.
-          exit-epoch: (if leaving-all
-            (some epoch)
-            (get exit-epoch record)
-          ),
-        })
-      )
-      (var-set bonded-sats (- (var-get bonded-sats) sats))
-      (var-set released-sats (+ (var-get released-sats) sats))
-      ;; Only the STX joins the exiting side. The sats have left the committed
-      ;; pool already, and counting them again would have the roll release
-      ;; them a second time out of somebody else's principal.
-      (if leaving-all
-        (var-set exiting-ustx (+ (var-get exiting-ustx) (get bonded-ustx record)))
-        false
-      )
-
-      (ok {
-        member: member,
-        epoch: epoch,
-        sats: sats,
-        remaining-sats: (- held sats),
-        shares-after: shares-left,
-        ustx-at-roll: (if leaving-all
-          (get bonded-ustx record)
-          u0
-        ),
-        exiting: leaving-all,
-      })
     )
   )
 )
@@ -1646,12 +1365,8 @@
       ))
       (next-index (+ (get reward-index record) delta))
       ;; Total ever credited to this epoch, recomputed from the new index
-      ;; rather than accumulated -- see `total-credited`. `credit-offset`
-      ;; carries the part of it that belongs to shares which have already
-      ;; left, so the recomputation cannot fall below what was recognised.
-      (credited (+ (/ (* shares next-index) PRECISION)
-        (get credit-offset record)
-      ))
+      ;; rather than accumulated -- see `total-credited`.
+      (credited (/ (* shares next-index) PRECISION))
       (recognized (- credited (get credited record)))
     )
     (asserts! (> recognized u0) ERR_NOTHING_TO_CLAIM)
@@ -2332,619 +2047,5 @@
       bonded-ustx: u0,
     })
     record
-  )
-)
-
-;;; Simnet-only: the fuzzing surface
-;;;
-;;; What follows this note in `contracts/bond-staker.clar` -- and is absent
-;;; from every build under `build/<network>/`, which is why there may be
-;;; nothing after it here -- is the surface Rendezvous reads: the invariants,
-;;; the properties, and stand-ins for the three entry points that reach pox-5.
-;;;
-;;; Each form carries `;; #[env(simnet)]`. Clarinet strips those from any
-;;; publish source, and `scripts/build-network.mjs` strips them on the way into
-;;; `build/`, so none of it reaches a chain. `clarinet check` compiles this
-;;; contract both with and without them, which is what makes it safe to keep
-;;; the two in one file.
-
-;;;
-;;; They are here rather than in a generated harness because Rendezvous reads
-;;; invariants and properties out of the contract under test, and a copy that
-;;; has to be concatenated in is a copy that can drift from what it constrains.
-;;;
-;;; `harness-bind`, `harness-lock` and `harness-release` stand in for the three
-;;; entry points that reach pox-5. They are needed because a protocol bond can
-;;; only be created by pox-5's bond admin -- a boot address no simnet wallet
-;;; holds, and one neither a Rendezvous dialer nor a deployment plan can reach
-;;; for more than the first bond. Without them the fuzzer would only ever see
-;;; an unbound pool. Everything the invariants actually constrain is untouched
-;;; production code.
-;;;
-;;; Two timings are shrunk so a run reaches the late states: a bond starts
-;;; within 200 burn blocks rather than months out, and its term runs 3000 burn
-;;; blocks rather than 12 reward cycles. Epoch *closure* is left alone: it runs
-;;; on pox-5's real reward cycles.
-;; #[env(simnet)]
-(define-map context
-  (string-ascii 100)
-  { called: uint }
-)
-
-;; #[env(simnet)]
-(define-private (update-context
-    (function-name (string-ascii 100))
-    (called uint)
-  )
-  (ok (map-set context function-name { called: called }))
-)
-
-;;; Stand-ins for the pox-5 calls
-;; `bind-bond` without the pox-5 lookups. Arguments are folded into sane
-;; ranges so a random call produces a usable bond instead of bouncing. The
-;; pricing is fixed at the first bind: letting it drift between bonds would
-;; mostly produce rolls that bounce on the STX floor, which the unit tests
-;; cover directly.
-;; #[env(simnet)]
-(define-public (harness-bind
-    (allocation-sats uint)
-    (ratio uint)
-    (bips uint)
-    (blocks-ahead uint)
-  )
-  ;; Far enough out that BIND_NOTICE (576) runs out before the stake window
-  ;; opens at start - 288. Bound any nearer and the notice outlasts the bond's
-  ;; start, which is exactly the trap `bind-bond` warns about -- and which had
-  ;; been silently stopping this harness from ever opening an epoch.
-  (let ((start (+ burn-block-height u900 (mod blocks-ahead u400))))
-    (asserts! (not (var-get finished)) ERR_ALREADY_UNSTAKED)
-    ;; Same rule as `bind-bond`: a bond whose window has closed unstaked can be
-    ;; replaced. rv jumps hundreds of burn blocks between rounds, so without
-    ;; this the first missed window would end the run.
-    (asserts! (not (can-still-stake)) ERR_BOND_ALREADY_BOUND)
-    (if (is-eq (var-get epoch-count) u0)
-      (begin
-        ;; Any deployed contract will do -- the harness never calls it -- but it
-        ;; has to be a contract, since that is what the trust list keys on.
-        (map-set operators DEPLOYER true)
-        (var-set signer-manager .bond-treasury)
-        (map-set trusted-signers
-          (unwrap-panic (contract-hash? .bond-treasury)) u0
-        )
-        (var-set initialized true)
-        (var-set pending-stx-value-ratio (+ u1 (mod ratio u1000000)))
-        (var-set pending-min-ustx-ratio (+ u1 (mod bips u10000)))
-      )
-      true
-    )
-    (var-set pending-bond-index (* (var-get epoch-count) NEXT_BOND_OFFSET))
-    (var-set pending-max-sats (+ u1000000 (mod allocation-sats u100000000000)))
-    ;; A launch floor on roughly one bind in four. `bind-bond` only accepts one
-    ;; for the genesis bond, which began at burn height 0 and so can never be
-    ;; set up in simnet -- this is the only place the check in `stake` gets
-    ;; exercised at all. Most binds are left floor-free on purpose: a floor on
-    ;; every one of them blocks nearly every lock, and an unstaked pool leaves
-    ;; the epoch and reward machinery untested, which is worth far more than
-    ;; this one comparison.
-    (var-set pending-min-sats (if (is-eq (mod allocation-sats u4) u0)
-      (mod allocation-sats u2000)
-      u0
-    ))
-    (var-set pending-start-height start)
-    (var-set pending-unlock-height (+ start u3000))
-    ;; The notice runs from here, same as `bind-bond`.
-    (var-set bound-at-height burn-block-height)
-    (var-set bond-bound true)
-    (ok true)
-  )
-)
-
-;; `stake` without pox-5: same gates, same state, and the sBTC difference
-;; moves between the treasury and the escrow exactly as it would move between
-;; the treasury and pox-5.
-;; #[env(simnet)]
-(define-public (harness-lock)
-  (let (
-      (preview (get-stake-preview))
-      (eligible (get eligible-sats preview))
-      (sats (get sats preview))
-      (ustx (get ustx preview))
-      (custodied (var-get bonded-sats))
-      (epoch (var-get epoch-count))
-    )
-    (asserts! (var-get bond-bound) ERR_NO_BOND_BOUND)
-    (asserts! (not (var-get finished)) ERR_ALREADY_UNSTAKED)
-    (asserts! (> eligible u0) ERR_NOTHING_DEPOSITED)
-    (asserts! (> sats u0) ERR_INSUFFICIENT_STX)
-    (asserts! (get meets-floor preview) ERR_BELOW_LAUNCH_FLOOR)
-    (asserts! (>= burn-block-height (stake-window-start)) ERR_TOO_EARLY)
-    (asserts! (< burn-block-height (var-get pending-start-height)) ERR_TOO_LATE)
-    (asserts! (>= burn-block-height (+ (var-get bound-at-height) BIND_NOTICE))
-      ERR_TOO_EARLY
-    )
-
-    (if (> sats custodied)
-      (begin
-        (try! (contract-call? .bond-treasury payout (- sats custodied)
-          current-contract
-        ))
-        (try! (as-contract?
-          ((with-ft 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
-            "sbtc-token" (- sats custodied)
-          ))
-          (try!
-            (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
-              transfer (- sats custodied) tx-sender .bond-escrow none
-            ))
-        ))
-      )
-      (if (< sats custodied)
-        (begin
-          (try! (contract-call? .bond-escrow release (- custodied sats)
-            current-contract
-          ))
-          (try! (as-contract?
-            ((with-ft 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
-              "sbtc-token" (- custodied sats)
-            ))
-            (try!
-              (contract-call?
-                'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token transfer
-                (- custodied sats) tx-sender .bond-treasury none
-              ))
-          ))
-        )
-        true
-      )
-    )
-
-    (map-set epochs epoch {
-      bond-index: (var-get pending-bond-index),
-      first-reward-cycle: (+ u1
-        (contract-call? 'ST000000000000000000002AMW42H.pox-5
-          current-pox-reward-cycle
-        )),
-      unlock-burn-height: (var-get pending-unlock-height),
-      staked-at-height: burn-block-height,
-      eligible-sats: eligible,
-      total-shares: sats,
-      staked-sats: sats,
-      staked-ustx: ustx,
-      reward-index: u0,
-      credited: u0,
-      credit-offset: u0,
-    })
-    (var-set epoch-count (+ epoch u1))
-    (var-set released-sats
-      (+ (var-get released-sats) (+ (var-get exiting-sats) (- eligible sats)))
-    )
-    (var-set released-ustx (+ (var-get released-ustx) (var-get exiting-ustx)))
-    (var-set exiting-sats u0)
-    (var-set exiting-ustx u0)
-    (var-set queued-sats u0)
-    (var-set queued-ustx u0)
-    (var-set bonded-sats sats)
-    (var-set bonded-ustx ustx)
-    (var-set bond-bound false)
-    (ok sats)
-  )
-)
-
-;; `unstake-sbtc` without pox-5.
-;; #[env(simnet)]
-(define-public (harness-release)
-  (let ((sats (var-get bonded-sats)))
-    (asserts! (> (var-get epoch-count) u0) ERR_NOT_STAKED)
-    (asserts! (not (var-get finished)) ERR_ALREADY_UNSTAKED)
-    (asserts!
-      (>= burn-block-height
-        (get unlock-burn-height (unwrap-panic (get-live-epoch)))
-      )
-      ERR_TOO_EARLY
-    )
-
-    (var-set finished true)
-    (var-set bond-bound false)
-    (var-set released-sats (+ (var-get released-sats) sats))
-    (var-set released-ustx (+ (var-get released-ustx) (var-get bonded-ustx)))
-    (var-set bonded-sats u0)
-    (var-set bonded-ustx u0)
-    (var-set exiting-sats u0)
-    (var-set exiting-ustx u0)
-
-    (try! (contract-call? .bond-escrow release sats current-contract))
-    (try! (as-contract?
-      ((with-ft 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
-        "sbtc-token" sats
-      ))
-      (try!
-        (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
-          transfer sats tx-sender .bond-treasury none
-        ))
-    ))
-    (ok sats)
-  )
-)
-
-
-;; `unstake-sbtc-early` without pox-5.
-;;
-;; Unlike the three above this is not a copy of what it stands in for: the
-;; ledger half is `apply-early-unstake` itself, and only the sBTC hand-back is
-;; played by the escrow. The amount is folded into what the caller actually
-;; holds, so a random call exercises the path instead of bouncing on its
-;; bounds -- roughly one call in three takes the whole position, which is the
-;; case that also sets the exit flag and moves the STX leg.
-;; #[env(simnet)]
-(define-public (harness-unstake-early (seed uint))
-  (let (
-      (whoever tx-sender)
-      (held (match (get-settled-member whoever)
-        record (get bonded-sats record)
-        u0
-      ))
-      (sats (if (is-eq (mod seed u3) u0)
-        held
-        (+ u1 (mod seed held))
-      ))
-    )
-    (asserts! (> held u0) ERR_NOTHING_DEPOSITED)
-    (let ((booked (try! (apply-early-unstake whoever sats))))
-      ;; The escrow stands in for pox-5's custody, so it is what pays the sats
-      ;; back; they carry on to the treasury exactly as they do in production.
-      (try! (contract-call? .bond-escrow release sats current-contract))
-      (try! (as-contract?
-        ((with-ft 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
-          "sbtc-token" sats
-        ))
-        (try!
-          (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
-            transfer sats tx-sender .bond-treasury none
-          ))
-      ))
-      (ok booked)
-    )
-  )
-)
-
-;; The real `deposit`, with the amount folded into a range a simnet wallet can
-;; actually pay. Fuzzing `deposit` directly is still worthwhile -- it covers
-;; the rejection paths -- but a full-range uint never buys anything, so
-;; without this the deposit-dependent half of the contract is never reached.
-;; #[env(simnet)]
-(define-public (harness-deposit (seed uint))
-  (let (
-      (committing (get-committing-sats))
-      (room (if (> (var-get pending-max-sats) committing)
-        (- (var-get pending-max-sats) committing)
-        u0
-      ))
-      (ceiling (if (< room u2000000)
-        room
-        u2000000
-      ))
-    )
-    (deposit (+ u1 (mod seed (+ u1 ceiling))))
-  )
-)
-
-;; A reward payment landing on the pool, as the signer manager would make it.
-;; #[env(simnet)]
-(define-public (harness-pay-rewards (amount uint))
-  (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
-    transfer amount tx-sender current-contract none
-  )
-)
-
-;;; Invariants: the pool
-;; Whatever rewards the pool has credited and not yet paid, it still holds.
-;; The principal is the treasury's problem, never netted off this balance.
-;; #[env(simnet)]
-(define-read-only (invariant-sbtc-covers-unpaid-rewards)
-  (>= (get-sbtc-balance) (get-unclaimed-rewards))
-)
-
-;; The treasury holds the principal that pox-5 does not: deposits waiting for a
-;; bond, positions that have ended and not yet been claimed, and sats locked in
-;; the sBTC bridge on their way to L1. It may hold more -- an unspent
-;; withdrawal fee, an unannounced bridge deposit -- but never less.
-;; #[env(simnet)]
-(define-read-only (invariant-treasury-covers-its-books)
-  (>= (get-treasury-balance)
-    (+ (var-get queued-sats)
-      (+ (var-get released-sats) (var-get withdrawing-sats))
-    ))
-)
-
-;; Anything above the books is unattributed, and that is the only thing the
-;; operator's sweep can reach.
-;; #[env(simnet)]
-(define-read-only (invariant-sweep-cannot-reach-principal)
-  (<= (+ (get-unattributed-principal)
-      (+ (var-get queued-sats)
-        (+ (var-get released-sats) (var-get withdrawing-sats))
-      ))
-    (get-treasury-balance)
-  )
-)
-
-;; The STX leg never leaves until it is claimed, so the contract can always
-;; cover every member's STX.
-;; #[env(simnet)]
-(define-read-only (invariant-stx-covers-obligations)
-  (let ((account (stx-account current-contract)))
-    (>= (+ (get locked account) (get unlocked account))
-      (+ (var-get queued-ustx) (+ (var-get bonded-ustx) (var-get released-ustx)))
-    )
-  )
-)
-
-;; The live epoch's shares are the pool's committed sats. Rewards are split by
-;; the former and principal is owed on the latter, so the two must not drift.
-;; #[env(simnet)]
-(define-read-only (invariant-live-epoch-matches-the-pool)
-  (match (get-live-epoch)
-    live (or
-      (var-get finished)
-      (is-eq (get total-shares live) (var-get bonded-sats))
-    )
-    (and (is-eq (var-get bonded-sats) u0) (is-eq (var-get bonded-ustx) u0))
-  )
-)
-
-;; Only a committed position can be on its way out.
-;; #[env(simnet)]
-(define-read-only (invariant-exits-fit-the-position)
-  (and
-    (<= (var-get exiting-sats) (var-get bonded-sats))
-    (<= (var-get exiting-ustx) (var-get bonded-ustx))
-  )
-)
-
-;; Rewards cannot start accruing before there is a bond to earn them.
-;; #[env(simnet)]
-(define-read-only (invariant-rewards-only-after-staking)
-  (or
-    (> (var-get epoch-count) u0)
-    (and (is-eq (var-get total-credited) u0) (is-eq (var-get total-paid) u0))
-  )
-)
-
-;; The pool never pays out more reward than it recognised.
-;; #[env(simnet)]
-(define-read-only (invariant-paid-within-credited)
-  (<= (var-get total-paid) (var-get total-credited))
-)
-
-;; A wound-down pool holds no position and can never take another one.
-;; #[env(simnet)]
-(define-read-only (invariant-finished-is-final)
-  (or
-    (not (var-get finished))
-    (and
-      (is-eq (var-get bonded-sats) u0)
-      (not (var-get bond-bound))
-    )
-  )
-)
-
-;;; Invariants: the early unstake
-;; An epoch's live shares never exceed what its roll actually committed.
-;; `stake` sets the two equal, and `unstake-sbtc-early` is the only thing that
-;; moves them apart -- only ever downwards.
-;; #[env(simnet)]
-(define-read-only (invariant-shares-never-exceed-the-roll (epoch uint))
-  (match (map-get? epochs epoch)
-    record (<= (get total-shares record) (get staked-sats record))
-    true
-  )
-)
-
-;; What an epoch has credited is exactly what its live shares account for plus
-;; what the shares that have left accounted for. This is the identity
-;; `sync-rewards` recomputes `credited` from and `apply-early-unstake`
-;; re-bases; break it and the next sync either credits the pool the difference
-;; or underflows working out what it recognised.
-;; #[env(simnet)]
-(define-read-only (invariant-epoch-credit-is-accounted-for (epoch uint))
-  (match (map-get? epochs epoch)
-    record (is-eq (get credited record)
-      (+ (/ (* (get total-shares record) (get reward-index record)) PRECISION)
-        (get credit-offset record)
-      ))
-    true
-  )
-)
-
-;;; Invariants: a member
-;; No member holds more weight in their epoch than the epoch itself has.
-;; #[env(simnet)]
-(define-read-only (invariant-member-shares-fit-the-epoch (member principal))
-  (match (get-settled-member member)
-    record (match (map-get? epochs (get settled-epoch record))
-      current (<= (get shares record) (get total-shares current))
-      ;; No epoch under that index yet: the member cannot hold shares in it.
-      (is-eq (get shares record) u0)
-    )
-    true
-  )
-)
-
-;; No member is owed more reward than the pool has credited and not paid.
-;; #[env(simnet)]
-(define-read-only (invariant-member-rewards-fit-the-pool (member principal))
-  (match (get-settled-member member)
-    record (<= (get pending record) (get-unclaimed-rewards))
-    true
-  )
-)
-
-;; A member's principal is always covered by the pool's own books, on both
-;; legs and in whichever bucket it currently sits.
-;; #[env(simnet)]
-(define-read-only (invariant-member-principal-fits-the-pool (member principal))
-  (match (get-settled-member member)
-    record (and
-      (<= (get queued-sats record) (var-get queued-sats))
-      (<= (get queued-ustx record) (var-get queued-ustx))
-      (<= (get released-sats record) (var-get released-sats))
-      (<= (get released-ustx record) (var-get released-ustx))
-      (<= (get bonded-sats record)
-        (+ (var-get bonded-sats) (var-get released-sats))
-      )
-      (<= (get bonded-ustx record)
-        (+ (var-get bonded-ustx) (var-get released-ustx))
-      )
-    )
-    true
-  )
-)
-
-;; A member never sits beyond the next epoch the pool could open. A newcomer
-;; starts one ahead of the live epoch -- that is how they hold no shares in
-;; anything already running -- and nothing may carry them further.
-;; #[env(simnet)]
-(define-read-only (invariant-member-settled-within-the-pool (member principal))
-  (match (get-settled-member member)
-    record (<= (get settled-epoch record) (var-get epoch-count))
-    true
-  )
-)
-
-;; Holding shares means sitting in an epoch that has actually opened, so the
-;; weight is always measured against a real reward pot. Together with
-;; `invariant-member-shares-fit-the-epoch` this is what stops a member being
-;; carried past an epoch they still have weight in.
-;; #[env(simnet)]
-(define-read-only (invariant-member-shares-need-an-epoch (member principal))
-  (match (get-settled-member member)
-    record (or
-      (is-eq (get shares record) u0)
-      (< (get settled-epoch record) (var-get epoch-count))
-    )
-    true
-  )
-)
-
-;; The pool is always pointed at a contract, never a bare account -- the trust
-;; list keys on code hashes, and only a contract has one.
-;;
-;; Note what is *not* asserted: that the current manager is still trusted.
-;; Distrusting takes effect at once and deliberately does not unwind a move
-;; already made, so a manager can outlive its entry on the list. That the
-;; operator can only ever *move onto* a trusted one is a property of the
-;; transition rather than of the state, and is covered by the unit tests.
-;; #[env(simnet)]
-(define-read-only (invariant-signer-manager-is-a-contract)
-  (or
-    (is-eq (var-get epoch-count) u0)
-    (is-ok (contract-hash? (var-get signer-manager)))
-  )
-)
-
-;;; Properties
-;; The STX the pool charges is never less than the STX pox-5 demands for the
-;; same sats -- the whole point of rounding the per-deposit leg up.
-;; #[env(simnet)]
-(define-private (test-required-ustx-covers-pox-minimum (sats uint))
-  (let ((bounded (mod sats u100000000000)))
-    (asserts!
-      (>= (get-required-ustx bounded)
-        (contract-call? 'ST000000000000000000002AMW42H.pox-5
-          min-ustx-for-sats-amount bounded (var-get pending-stx-value-ratio)
-          (var-get pending-min-ustx-ratio)
-        ))
-      (err u900)
-    )
-    (ok true)
-  )
-)
-
-;; `ceil-div` rounds up, and by less than one whole denominator.
-;; #[env(simnet)]
-(define-private (test-ceil-div-is-tight
-    (numerator uint)
-    (denominator uint)
-  )
-  (let (
-      (n (mod numerator u1000000000000000000))
-      (d (+ u1 (mod denominator u1000000)))
-      (q (ceil-div (mod numerator u1000000000000000000)
-        (+ u1 (mod denominator u1000000))
-      ))
-    )
-    (asserts! (>= (* q d) n) (err u901))
-    (asserts! (or (is-eq q u0) (< (* (- q u1) d) n)) (err u902))
-    (ok true)
-  )
-)
-
-;; Settling never loses rewards a member had already accrued, and never
-;; moves their principal.
-;; #[env(simnet)]
-(define-private (test-settle-preserves-pending-and-principal
-    (sats uint)
-    (pending uint)
-  )
-  (let (
-      (record {
-        shares: (mod sats u100000000),
-        bonded-sats: (mod sats u100000000),
-        bonded-ustx: u0,
-        queued-sats: u0,
-        queued-ustx: u0,
-        queued-epoch: u0,
-        released-sats: u0,
-        released-ustx: u0,
-        settled-epoch: u0,
-        reward-index: u0,
-        pending: (mod pending u100000000),
-        tail-epoch: none,
-        tail-shares: u0,
-        tail-index: u0,
-        exit-epoch: none,
-      })
-      (settled (settle record))
-    )
-    (asserts! (>= (get pending settled) (get pending record)) (err u903))
-    ;; principal is only ever moved between buckets, never created or lost
-    (asserts!
-      (is-eq
-        (+ (get bonded-sats settled)
-          (+ (get queued-sats settled) (get released-sats settled))
-        )
-        (+ (get bonded-sats record)
-          (+ (get queued-sats record) (get released-sats record))
-        ))
-      (err u904)
-    )
-    (ok true)
-  )
-)
-
-;; Re-basing an epoch's credit when shares leave neither underflows nor moves
-;; the running total. `apply-early-unstake` takes the new offset to be the
-;; shortfall between what was credited and what the remaining shares account
-;; for, which is only sound if the second is never the larger of the two.
-;; #[env(simnet)]
-(define-private (test-credit-offset-holds-the-total
-    (shares uint)
-    (leaving uint)
-    (index uint)
-  )
-  (let (
-      (total (+ u1 (mod shares u100000000000)))
-      (out (mod leaving (+ u1 total)))
-      (left (- total out))
-      (idx (mod index u100000000000000000))
-      (credited (/ (* total idx) PRECISION))
-      (accounted (/ (* left idx) PRECISION))
-    )
-    ;; the shortfall is never negative, which is what makes the subtraction in
-    ;; `apply-early-unstake` total
-    (asserts! (>= credited accounted) (err u905))
-    ;; ...and re-basing lands exactly back on the number it started from
-    (asserts! (is-eq (+ accounted (- credited accounted)) credited) (err u906))
-    (ok true)
   )
 )

@@ -66,21 +66,16 @@ plan:
     - transaction-type: emulated-contract-publish
       contract-name: sbtc-deposit
       emulated-sender: SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4
-      path: .cache/requirements/SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-deposit.clar
+      path: ../.cache/requirements/SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-deposit.clar
       clarity-version: 3
     - transaction-type: emulated-contract-publish
       contract-name: sbtc-withdrawal
       emulated-sender: SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4
-      path: .cache/requirements/SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-withdrawal.clar
+      path: ../.cache/requirements/SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-withdrawal.clar
       clarity-version: 3
     epoch: '3.0'
   - id: 1
     transactions:
-    - transaction-type: emulated-contract-publish
-      contract-name: bond-escrow
-      emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
-      path: rendezvous/bond-escrow.clar
-      clarity-version: 6
     - transaction-type: emulated-contract-publish
       contract-name: bond-treasury
       emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
@@ -104,11 +99,11 @@ plan:
     - transaction-type: emulated-contract-publish
       contract-name: fastpool-signer-manager
       emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
-      path: ../fastpool-pox-5/contracts/fastpool-signer-manager.clar
+      path: ../../fastpool-pox-5/contracts/fastpool-signer-manager.clar
       clarity-version: 6
     - transaction-type: emulated-contract-publish
       contract-name: signer-manager
       emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
-      path: ../fastpool-pox-5/contracts/signer-manager.clar
+      path: ../../fastpool-pox-5/contracts/signer-manager.clar
       clarity-version: 6
     epoch: '4.0'

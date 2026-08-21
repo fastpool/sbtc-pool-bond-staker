@@ -295,15 +295,6 @@ export const trustedSigner = (codeHash: string) =>
     ]),
   );
 
-/** Take committed sBTC back before the bond's term is up. */
-export const unstakeEarly = (who: string, sats: number, manager = MANAGER) =>
-  simnet.callPublicFn(
-    POOL,
-    "unstake-sbtc-early",
-    [Cl.principal(managerPrincipal(manager)), Cl.uint(sats)],
-    who,
-  ).result;
-
 export const requestExit = (who: string) =>
   simnet.callPublicFn(POOL, "request-exit", [], who).result;
 
@@ -358,36 +349,34 @@ export const COMMIT_TTL = 36;
 /** ...and before they may clear a revealed one. */
 export const ANNOUNCE_TTL = 1000;
 
-/** A `{version, hashbytes}` bitcoin address; p2wpkh unless told otherwise. */
-export const btcAddress = (hash = "11".repeat(20), version = "04") =>
-  Cl.tuple({
-    version: Cl.bufferFromHex(version),
-    hashbytes: Cl.bufferFromHex(hash),
-  });
+/** Ask the contract what a (txid, vout, salt) commits to. */
+export const depositDigest = (txid: string, voutIndex = 0, salt = SALT) =>
+  (
+    readBridge("get-deposit-digest", [
+      Cl.bufferFromHex(txid),
+      Cl.uint(voutIndex),
+      Cl.bufferFromHex(salt),
+    ]) as any
+  ).value as string;
 
-/** Ask the contract what an (address, salt) commits to. */
-export const addressDigest = (address = btcAddress(), salt = SALT) =>
-  plain(
-    readBridge("get-address-digest", [address, Cl.bufferFromHex(salt)]),
-  ) as string;
-
-export const commitBtcAddress = (who: string, digest: string, sats: number) =>
+export const commitBtcDeposit = (who: string, digest: string, sats: number) =>
   simnet.callPublicFn(
     BRIDGE,
-    "commit-btc-address",
+    "commit-btc-deposit",
     [Cl.bufferFromHex(digest.replace(/^0x/, "")), Cl.uint(sats)],
     who,
   ).result;
 
-export const revealBtcAddress = (
+export const revealBtcDeposit = (
   who: string,
-  address = btcAddress(),
+  txid: string,
+  voutIndex = 0,
   salt = SALT,
 ) =>
   simnet.callPublicFn(
     BRIDGE,
-    "reveal-btc-address",
-    [address, Cl.bufferFromHex(salt)],
+    "reveal-btc-deposit",
+    [Cl.bufferFromHex(txid), Cl.uint(voutIndex), Cl.bufferFromHex(salt)],
     who,
   ).result;
 
@@ -404,45 +393,50 @@ export const cancelBtcCommitment = (
   ).result;
 
 /**
- * The whole pre-send half of the flow: commit, wait out REVEAL_DELAY, reveal.
- * Returns the failing step's error if either fails, so callers can assert on it
- * the way they would on one call.
+ * The whole pre-broadcast half of the flow: commit, wait out REVEAL_DELAY,
+ * reveal. Returns the failing step's error if either fails, so callers can
+ * assert on it the way they did when this was one call.
  */
-export const announceBtcAddress = (
+export const announceBtcDeposit = (
   who: string,
+  txid: string,
   sats: number,
-  address = btcAddress(),
+  voutIndex = 0,
   salt = SALT,
 ) => {
-  const committed = commitBtcAddress(who, addressDigest(address, salt), sats);
+  const committed = commitBtcDeposit(
+    who,
+    depositDigest(txid, voutIndex, salt),
+    sats,
+  );
   if (committed.type === "err") return committed;
   simnet.mineEmptyBurnBlocks(REVEAL_DELAY);
-  return revealBtcAddress(who, address, salt);
+  return revealBtcDeposit(who, txid, voutIndex, salt);
 };
 
-export const completeBtcDeposit = (
+export const confirmBtcDeposit = (
   txid: string,
-  tx: string,
-  parents: string[],
   voutIndex = 0,
   who: string = deployer,
 ) =>
   simnet.callPublicFn(
     BRIDGE,
-    "complete-btc-deposit",
-    [
-      Cl.bufferFromHex(txid),
-      Cl.uint(voutIndex),
-      Cl.bufferFromHex(tx),
-      Cl.list(parents.map((parent) => Cl.bufferFromHex(parent))),
-    ],
+    "confirm-btc-deposit",
+    [Cl.bufferFromHex(txid), Cl.uint(voutIndex)],
     who,
   ).result;
 
-export const cancelBtcAddress = (
-  address = btcAddress(),
+export const cancelBtcDeposit = (
+  txid: string,
+  voutIndex = 0,
   who: string = deployer,
-) => simnet.callPublicFn(BRIDGE, "cancel-btc-deposit", [address], who).result;
+) =>
+  simnet.callPublicFn(
+    BRIDGE,
+    "cancel-btc-deposit",
+    [Cl.bufferFromHex(txid), Cl.uint(voutIndex)],
+    who,
+  ).result;
 
 export const claimPrincipalToBtc = (
   who: string,
@@ -552,20 +546,9 @@ export const readTreasury = (fn: string, args: ClarityValue[] = []) =>
 export const readBridge = (fn: string, args: ClarityValue[] = []) =>
   simnet.callReadOnlyFn(BRIDGE, fn, args, deployer).result;
 
-export const btcAnnouncement = (address = btcAddress()) =>
-  plain(readBridge("get-announcement", [address])) as any;
-
-export const btcCommitment = (member: string, digest: string) =>
+export const btcDeposit = (txid: string, voutIndex = 0) =>
   plain(
-    readBridge("get-commitment", [
-      Cl.principal(member),
-      Cl.bufferFromHex(digest.replace(/^0x/, "")),
-    ]),
-  ) as any;
-
-export const creditedDeposit = (txid: string, voutIndex = 0) =>
-  plain(
-    readBridge("get-credited-deposit", [
+    readBridge("get-announcement", [
       Cl.bufferFromHex(txid),
       Cl.uint(voutIndex),
     ]),
@@ -612,33 +595,6 @@ export const claimableRewards = (who: string) =>
   num(readPool("get-claimable-rewards", [Cl.principal(who)]));
 export const claimablePrincipal = (who: string) =>
   plain(readPool("get-claimable-principal", [Cl.principal(who)])) as any;
-export const earlyUnstakePreview = (who: string) =>
-  plain(readPool("get-early-unstake-preview", [Cl.principal(who)])) as any;
-
-/** What pox-5 says it is holding for the pool. */
-export const custodiedSats = () =>
-  readPoxNum("get-staker-custodied-sbtc", [Cl.principal(poolPrincipal())]);
-
-/** Whether pox-5 would currently refuse an unstake for prepare-phase reasons. */
-export function inPreparePhase() {
-  const cycle = readPoxNum("current-pox-reward-cycle");
-  return plain(readPox("is-in-prepare-phase", [Cl.uint(cycle)])) === true;
-}
-
-/**
- * Move to a burn height that is not inside a reward cycle's prepare phase.
- *
- * pox-5 refuses `unstake-sbtc` there, so an early exit can bounce on timing
- * alone. Tests that are not about that should not have to care. Asked of pox-5
- * rather than worked out from the cycle length, so the helper cannot drift
- * from the rule it is dodging.
- */
-export function avoidPreparePhase() {
-  for (let guard = 0; inPreparePhase() && guard < 200; guard++) {
-    simnet.mineEmptyBurnBlocks(10);
-  }
-  return simnet.burnBlockHeight;
-}
 
 /** The pooled principal: the treasury's sBTC balance. */
 export const treasuryBalance = () => sbtcBalance(treasuryPrincipal());

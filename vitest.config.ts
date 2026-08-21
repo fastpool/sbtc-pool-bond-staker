@@ -21,6 +21,10 @@ import {
 
 export default defineConfig({
   test: {
+    // `v1/` is a frozen snapshot with its own manifest and its own config;
+    // `pnpm run test:v1` runs it. It must not be picked up here, where
+    // `bond-staker` is the pool with the early unstake in it.
+    exclude: ["**/node_modules/**", "v1/**"],
     // use vitest-environment-clarinet
     environment: "clarinet",
     pool: "forks",

@@ -1,8 +1,8 @@
-# Manifest used only by the Rendezvous fuzzer.
+# Manifest used only by the Rendezvous fuzzer, for the archived pool.
 #
 # `rv` picks up `Clarinet-<contract-name>.toml` when it exists, so
-# `npx rv . bond-staker invariant` runs against this manifest instead of
-# Clarinet.toml. It deploys the generated harness -- the production contract
+# `pnpm exec rv ./v1 bond-staker invariant` runs against this manifest instead
+# of v1/Clarinet.toml. It deploys the generated harness -- the production contract
 # plus the invariants and pox-5 stand-ins -- under the name `bond-staker`,
 # alongside the `bond-escrow` contract that stands in for pox-5's custody.
 #
@@ -13,7 +13,8 @@ name = "fastpool-pox-5"
 description = "Rendezvous harness"
 authors = []
 telemetry = false
-cache_dir = "./.cache"
+# Shared with the main project rather than fetched twice.
+cache_dir = "../.cache"
 requirements = [
     {contract_id = 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-withdrawal'},
     {contract_id = 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-deposit'}
@@ -26,7 +27,7 @@ check_checker = { trusted_sender = false, trusted_caller = false, callee_filter 
 [contracts]
 
 [contracts.fastpool-signer-manager]
-path = "../fastpool-pox-5/contracts/fastpool-signer-manager.clar"
+path = "../../fastpool-pox-5/contracts/fastpool-signer-manager.clar"
 clarity_version = 6
 epoch = "4.0"
 

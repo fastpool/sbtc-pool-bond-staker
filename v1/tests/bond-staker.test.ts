@@ -2,6 +2,7 @@ import { Cl } from "@stacks/transactions";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   advanceToBurnHeight,
+  BRIDGE,
   canUseSigner,
   isOperator,
   updateOperator,
@@ -11,9 +12,22 @@ import {
   trustSigner,
   bridgePrincipal,
   btcRecipient,
+  readBridge,
   readTreasury,
+  announceBtcDeposit,
+  btcDeposit,
   btcWithdrawal,
+  cancelBtcCommitment,
+  cancelBtcDeposit,
+  commitBtcDeposit,
+  depositDigest,
+  revealBtcDeposit,
+  SALT,
+  REVEAL_DELAY,
+  COMMIT_TTL,
+  ANNOUNCE_TTL,
   claimPrincipalToBtc,
+  confirmBtcDeposit,
   reclaimBtcWithdrawal,
   SBTC_REGISTRY,
   settleBtcWithdrawal,
@@ -1144,10 +1158,277 @@ describe("bond-staker: a missed bond", () => {
   });
 });
 
-// Joining with L1 bitcoin -- the commit, the reveal, and the deposit that
-// proves which address funded it -- lives in `bond-bridge.test.ts`, which
-// has the bitcoin transactions to hand. What stays here is the ledger's side of
-// the bridge: paying out to bitcoin, and the five hooks the bridge calls.
+describe("bond-staker: joining with L1 bitcoin", () => {
+  const TXID = "a1".repeat(32);
+
+  it("names the treasury as the address to bridge to", () => {
+    bootstrap();
+    const result = plain(announceBtcDeposit(alice, TXID, ALICE_SATS) as any);
+    expect(result["deposit-to"]).toBe(treasuryPrincipal());
+    expect(plain(readBridge("get-deposit-address"))).toBe(treasuryPrincipal());
+  });
+
+  it("takes the STX leg up front and holds the allocation", () => {
+    bootstrap();
+    const ustx = requiredUstx(ALICE_SATS);
+    const stxBefore = stxBalance(alice);
+
+    expect(announceBtcDeposit(alice, TXID, ALICE_SATS).type).toBe("ok");
+
+    // the STX is paid now; the sats are still on bitcoin. The bridge holds the
+    // STX until the deposit lands -- the ledger only counts what it has.
+    expect(stxBalance(alice)).toBe(stxBefore - ustx);
+    expect(stxBalance(bridgePrincipal())).toBe(ustx);
+    expect(stxBalance(poolPrincipal())).toBe(0);
+    expect(treasuryBalance()).toBe(0);
+    expect(Number(poolTotals()["announced-sats"])).toBe(ALICE_SATS);
+    expect(Number(poolTotals()["queued-sats"])).toBe(0);
+    // ...and it counts against the pool's room
+    expect(num(readPool("get-committing-sats"))).toBe(ALICE_SATS);
+    expect(Number(btcDeposit(TXID).sats)).toBe(ALICE_SATS);
+  });
+
+  it("queues the sats once the signers sweep the deposit", () => {
+    bootstrap();
+    announceBtcDeposit(alice, TXID, ALICE_SATS);
+    expect(confirmBtcDeposit(TXID)).toBeErr(Cl.uint(304)); // NOT_SWEPT
+
+    expect(sweepBtcDeposit(TXID, ALICE_SATS).type).toBe("ok");
+    expect(treasuryBalance()).toBe(ALICE_SATS);
+    // permissionless: a keeper can finish the job
+    expect(confirmBtcDeposit(TXID, 0, carol).type).toBe("ok");
+
+    expect(Number(poolTotals()["announced-sats"])).toBe(0);
+    expect(Number(poolTotals()["queued-sats"])).toBe(ALICE_SATS);
+    expect(Number(member(alice)["queued-sats"])).toBe(ALICE_SATS);
+    expect(Number(member(alice)["queued-ustx"])).toBe(requiredUstx(ALICE_SATS));
+    // the STX leg moved from the bridge to the ledger with the sats
+    expect(stxBalance(bridgePrincipal())).toBe(0);
+    expect(stxBalance(poolPrincipal())).toBe(requiredUstx(ALICE_SATS));
+    expect(btcDeposit(TXID)).toBeNull();
+    // alice never touched sBTC
+    expect(sbtcBalance(alice)).toBe(1_000_000_000);
+  });
+
+  it("credits what arrived when the signers' fee eats into the deposit", () => {
+    bootstrap();
+    const SWEEP_FEE = 20_000;
+    const arrived = ALICE_SATS - SWEEP_FEE;
+    const ustx = requiredUstx(ALICE_SATS);
+
+    expect(announceBtcDeposit(alice, TXID, ALICE_SATS).type).toBe("ok");
+    expect(sweepBtcDeposit(TXID, arrived).type).toBe("ok");
+    expect(confirmBtcDeposit(TXID).type).toBe("ok");
+
+    // the position is what the treasury actually holds, not what was announced
+    expect(treasuryBalance()).toBe(arrived);
+    expect(Number(member(alice)["queued-sats"])).toBe(arrived);
+    expect(Number(poolTotals()["queued-sats"])).toBe(arrived);
+    // the STX leg follows the announcement, and is the member's to reclaim
+    expect(Number(member(alice)["queued-ustx"])).toBe(ustx);
+    expect(stxBalance(bridgePrincipal())).toBe(0);
+    // the room the shortfall was holding is released, not left reserved
+    expect(Number(poolTotals()["announced-sats"])).toBe(0);
+    expect(num(readPool("get-committing-sats"))).toBe(arrived);
+    expect(btcDeposit(TXID)).toBeNull();
+  });
+
+  it("does not strand a short deposit: it can never be left unconfirmable", () => {
+    bootstrap();
+    announceBtcDeposit(alice, TXID, ALICE_SATS);
+    expect(sweepBtcDeposit(TXID, ALICE_SATS - 1).type).toBe("ok");
+    // cancelling is barred once swept, so confirm has to be the way out
+    expect(cancelBtcDeposit(TXID, 0, alice)).toBeErr(Cl.uint(307)); // SWEPT
+    expect(confirmBtcDeposit(TXID).type).toBe("ok");
+    expect(Number(member(alice)["queued-sats"])).toBe(ALICE_SATS - 1);
+  });
+
+  it("credits only what was announced when more arrives than expected", () => {
+    bootstrap();
+    const extra = 5_000;
+    announceBtcDeposit(alice, TXID, ALICE_SATS);
+    expect(sweepBtcDeposit(TXID, ALICE_SATS + extra).type).toBe("ok");
+    expect(confirmBtcDeposit(TXID).type).toBe("ok");
+
+    expect(Number(member(alice)["queued-sats"])).toBe(ALICE_SATS);
+    // the overpayment is in the treasury attributed to nobody
+    expect(treasuryBalance()).toBe(ALICE_SATS + extra);
+    expect(Number(unattributedPrincipal())).toBe(extra);
+  });
+
+  it("carries an L1 joiner into the bond like any other member", () => {
+    const { bondStart } = bootstrap();
+    announceBtcDeposit(alice, TXID, ALICE_SATS);
+    sweepBtcDeposit(TXID, ALICE_SATS);
+    confirmBtcDeposit(TXID);
+
+    advanceToBurnHeight(bondStart - 288);
+    expect(stake().type).toBe("ok");
+    expect(Number(settledMember(alice).shares)).toBe(ALICE_SATS);
+    expect(sbtcBalance(POX5)).toBe(ALICE_SATS);
+  });
+
+  it("will not confirm a deposit the bridge sent somewhere else", () => {
+    bootstrap();
+    announceBtcDeposit(alice, TXID, ALICE_SATS);
+    // swept to the pool instead of the treasury
+    sweepBtcDeposit(TXID, ALICE_SATS, poolPrincipal());
+    expect(confirmBtcDeposit(TXID)).toBeErr(Cl.uint(305)); // MISDIRECTED
+  });
+
+  it("cannot be announced twice, or after the sweep", () => {
+    bootstrap();
+    announceBtcDeposit(alice, TXID, ALICE_SATS);
+    expect(announceBtcDeposit(bob, TXID, ALICE_SATS)).toBeErr(Cl.uint(303));
+
+    const other = "a2".repeat(32);
+    sweepBtcDeposit(other, ALICE_SATS);
+    expect(announceBtcDeposit(bob, other, ALICE_SATS)).toBeErr(Cl.uint(307));
+  });
+
+  it("hands the STX back when an announcement is called off", () => {
+    bootstrap();
+    const stxBefore = stxBalance(alice);
+    announceBtcDeposit(alice, TXID, ALICE_SATS);
+
+    // nobody else can cancel it while it is live
+    expect(cancelBtcDeposit(TXID, 0, bob)).toBeErr(Cl.uint(308));
+    expect(cancelBtcDeposit(TXID, 0, alice).type).toBe("ok");
+
+    expect(stxBalance(alice)).toBe(stxBefore);
+    expect(Number(poolTotals()["announced-sats"])).toBe(0);
+    expect(btcDeposit(TXID)).toBeNull();
+  });
+
+  it("lets anyone free the room once the announcement has gone stale", () => {
+    bootstrap();
+    announceBtcDeposit(alice, TXID, ALICE_SATS);
+    simnet.mineEmptyBurnBlocks(1000);
+    expect(cancelBtcDeposit(TXID, 0, bob).type).toBe("ok");
+    expect(Number(poolTotals()["announced-sats"])).toBe(0);
+  });
+
+  it("cannot be cancelled once the sats have landed", () => {
+    bootstrap();
+    announceBtcDeposit(alice, TXID, ALICE_SATS);
+    sweepBtcDeposit(TXID, ALICE_SATS);
+    expect(cancelBtcDeposit(TXID, 0, alice)).toBeErr(Cl.uint(307));
+  });
+
+  it("counts announcements against the allocation", () => {
+    bootstrap();
+    announceBtcDeposit(alice, TXID, MAX_SATS);
+    expect(deposit(bob, 1)).toBeErr(Cl.uint(105)); // ALLOCATION_EXCEEDED
+    cancelBtcDeposit(TXID, 0, alice);
+    expect(deposit(bob, 1).type).toBe("ok");
+  });
+});
+
+describe("bond-staker: committing and revealing an L1 deposit", () => {
+  const TXID = "ab".repeat(32);
+  const digest = () => depositDigest(TXID, 0, SALT);
+
+  beforeEach(() => {
+    bootstrap();
+  });
+
+  it("will not reveal in the same block as the commit", () => {
+    expect(commitBtcDeposit(alice, digest(), ALICE_SATS).type).toBe("ok");
+    expect(revealBtcDeposit(alice, TXID)).toBeErr(Cl.uint(314)); // TOO_SOON
+    simnet.mineEmptyBurnBlocks(REVEAL_DELAY);
+    expect(revealBtcDeposit(alice, TXID).type).toBe("ok");
+  });
+
+  it("will not reveal a txid nobody committed to", () => {
+    expect(revealBtcDeposit(alice, TXID)).toBeErr(Cl.uint(312)); // UNKNOWN
+  });
+
+  it("gives the txid to the first reveal, so a watcher is always late", () => {
+    // Alice commits and reveals. Only now is the txid public anywhere.
+    expect(commitBtcDeposit(alice, digest(), ALICE_SATS).type).toBe("ok");
+    simnet.mineEmptyBurnBlocks(REVEAL_DELAY);
+    expect(revealBtcDeposit(alice, TXID).type).toBe("ok");
+
+    // Carol reads it off the reveal and races the rest of the flow. Even
+    // knowing the salt, the txid is already spoken for.
+    expect(commitBtcDeposit(carol, digest(), ALICE_SATS).type).toBe("ok");
+    simnet.mineEmptyBurnBlocks(REVEAL_DELAY);
+    expect(revealBtcDeposit(carol, TXID)).toBeErr(Cl.uint(303)); // ANNOUNCED
+
+    // The sats go where the first reveal said they would.
+    expect(sweepBtcDeposit(TXID, ALICE_SATS).type).toBe("ok");
+    expect(confirmBtcDeposit(TXID).type).toBe("ok");
+    expect(Number(member(alice)["queued-sats"])).toBe(ALICE_SATS);
+    expect(member(carol)).toBeNull();
+  });
+
+  it("lets a copied digest block nobody: commitments are keyed by member", () => {
+    // Carol lifts alice's digest out of the mempool and commits it first.
+    expect(commitBtcDeposit(carol, digest(), ALICE_SATS).type).toBe("ok");
+    // Alice's own commit is unaffected.
+    expect(commitBtcDeposit(alice, digest(), ALICE_SATS).type).toBe("ok");
+    // ...and she cannot commit the same one twice.
+    expect(commitBtcDeposit(alice, digest(), ALICE_SATS)).toBeErr(Cl.uint(313));
+
+    simnet.mineEmptyBurnBlocks(REVEAL_DELAY);
+    expect(revealBtcDeposit(alice, TXID).type).toBe("ok");
+  });
+
+  it("will not reveal a transaction the signers have already swept", () => {
+    expect(commitBtcDeposit(alice, digest(), ALICE_SATS).type).toBe("ok");
+    simnet.mineEmptyBurnBlocks(REVEAL_DELAY);
+    // Someone deposited to the treasury without announcing; those sats are
+    // unattributed and a reveal must not be able to pick them up.
+    expect(sweepBtcDeposit(TXID, ALICE_SATS).type).toBe("ok");
+    expect(revealBtcDeposit(alice, TXID)).toBeErr(Cl.uint(307)); // SWEPT
+  });
+
+  it("hands back the STX and the room when a commitment is abandoned", () => {
+    const ustx = requiredUstx(ALICE_SATS);
+    const stxBefore = stxBalance(alice);
+    expect(commitBtcDeposit(alice, digest(), ALICE_SATS).type).toBe("ok");
+    expect(stxBalance(alice)).toBe(stxBefore - ustx);
+    expect(num(readPool("get-committing-sats"))).toBe(ALICE_SATS);
+
+    // A stranger cannot cancel it while it is live...
+    expect(cancelBtcCommitment(alice, digest(), carol)).toBeErr(Cl.uint(308));
+    // ...but the member can, whenever.
+    expect(cancelBtcCommitment(alice, digest()).type).toBe("ok");
+    expect(stxBalance(alice)).toBe(stxBefore);
+    expect(num(readPool("get-committing-sats"))).toBe(0);
+    expect(Number(poolTotals()["announced-sats"])).toBe(0);
+  });
+
+  it("lets anyone clear a commitment that has gone stale", () => {
+    const stxBefore = stxBalance(alice);
+    expect(commitBtcDeposit(alice, digest(), ALICE_SATS).type).toBe("ok");
+
+    // not a moment before COMMIT_TTL...
+    simnet.mineEmptyBurnBlocks(COMMIT_TTL - 1);
+    expect(cancelBtcCommitment(alice, digest(), carol)).toBeErr(Cl.uint(308));
+
+    simnet.mineEmptyBurnBlocks(1);
+    expect(cancelBtcCommitment(alice, digest(), carol).type).toBe("ok");
+    expect(num(readPool("get-committing-sats"))).toBe(0);
+    // the STX goes back to the member, not to whoever cleared it
+    expect(stxBalance(alice)).toBe(stxBefore);
+  });
+
+  it("clears a commitment far sooner than a revealed deposit", () => {
+    // A commitment is not a deposit in flight: nothing has been broadcast, so
+    // it does not get the week that a revealed one does.
+    expect(COMMIT_TTL).toBeLessThan(ANNOUNCE_TTL);
+
+    expect(commitBtcDeposit(alice, digest(), ALICE_SATS).type).toBe("ok");
+    simnet.mineEmptyBurnBlocks(REVEAL_DELAY);
+    expect(revealBtcDeposit(alice, TXID).type).toBe("ok");
+
+    // past COMMIT_TTL, but this one is revealed and holds its week
+    simnet.mineEmptyBurnBlocks(COMMIT_TTL);
+    expect(cancelBtcDeposit(TXID, 0, carol)).toBeErr(Cl.uint(308)); // LIVE
+    expect(cancelBtcDeposit(TXID, 0, alice).type).toBe("ok"); // its owner may
+  });
+});
 
 describe("bond-staker: leaving over the sBTC bridge", () => {
   const MAX_FEE = 10_000;

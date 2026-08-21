@@ -34,6 +34,7 @@ import {
   signMessageHashRsv,
 } from "@stacks/transactions";
 import { SimulationBuilder, getSimulationResult } from "stxer";
+import { buildTx, scriptFor } from "../lib/btc-tx.js";
 
 const API = "https://api.hiro.so";
 const POX5 = "SP000000000000000000002Q6VF78.pox-5";
@@ -125,19 +126,26 @@ const readPox = async (functionName, functionArgs = []) =>
 const unwrap = (v) => v?.value?.value ?? v?.value ?? v;
 
 /**
- * What `bond-bridge.get-deposit-digest` would return, computed here so the
+ * What `bond-bridge.get-address-digest` would return, computed here so the
  * commit can be built before the contract exists to be asked.
  */
-const depositDigest = (txid, voutIndex, salt) => {
+const addressDigest = (script, salt) => {
   const tuple = Cl.tuple({
-    txid: Cl.bufferFromHex(txid),
-    "vout-index": Cl.uint(voutIndex),
+    script: Cl.bufferFromHex(script),
     salt: Cl.bufferFromHex(salt),
   });
   return createHash("sha256")
     .update(Buffer.from(serializeCV(tuple), "hex"))
     .digest("hex");
 };
+
+const sha256d = (hex) =>
+  createHash("sha256")
+    .update(createHash("sha256").update(Buffer.from(hex, "hex")).digest())
+    .digest();
+
+/** The txid of a serialized transaction, as bitcoin displays it. */
+const txidOf = (tx) => Buffer.from(sha256d(tx)).reverse().toString("hex");
 
 /**
  * Find the bond whose start height is the announced one.
@@ -340,19 +348,40 @@ burn blocks to skip : ${advance}
       fee: 0,
     });
   } else {
-    // In over L1: commit, wait a burn block, reveal, then have the sBTC
-    // signers sweep the deposit to the treasury and confirm it.
-    const txid = "ab".repeat(32);
+    // In over L1: commit to the address the bitcoin will come from, wait a burn
+    // block, reveal it, then have the sBTC signers sweep the deposit to the
+    // treasury and complete it.
+    //
+    // The deposit and its parent are built here rather than taken from bitcoin
+    // because nothing is broadcast: what `complete-btc-deposit` checks is that
+    // the bytes hash to the txid the registry recorded, and the registry entry
+    // below is written by this simulation. Real bytes would prove no more.
     const salt = "5a".repeat(32);
+    const hashbytes = "a1".repeat(20);
+    const script = scriptFor("04", hashbytes); // p2wpkh
+    const address = Cl.tuple({
+      version: Cl.bufferFromHex("04"),
+      hashbytes: Cl.bufferFromHex(hashbytes),
+    });
+    // The parent pays the member's address; the deposit spends that output.
+    const parent = buildTx(
+      [{ txid: "de".repeat(32), vout: 0 }],
+      [{ value: MEMBER_SATS * 2, script }],
+    );
+    const tx = buildTx(
+      [{ txid: txidOf(parent), vout: 0 }],
+      [{ value: MEMBER_SATS, script: scriptFor("05", "ee".repeat(32)) }],
+    );
+    const txid = txidOf(tx);
     const bridgeId = `${DEPLOYER}.bond-bridge`;
     const treasuryId = `${DEPLOYER}.bond-treasury`;
     builder
-      .addReads([{ EvalReadonly: [DEPLOYER, "", bridgeId, `(get-deposit-digest 0x${txid} u0 0x${salt})`] }])
+      .addReads([{ EvalReadonly: [DEPLOYER, "", bridgeId, `(get-address-digest { version: 0x04, hashbytes: 0x${hashbytes} } 0x${salt})`] }])
       .addContractCall({
         contract_id: bridgeId,
-        function_name: "commit-btc-deposit",
+        function_name: "commit-btc-address",
         function_args: [
-          Cl.bufferFromHex(depositDigest(txid, 0, salt)),
+          Cl.bufferFromHex(addressDigest(script, salt)),
           Cl.uint(MEMBER_SATS),
         ],
         fee: 0,
@@ -360,8 +389,8 @@ burn blocks to skip : ${advance}
       .addAdvanceBlocks({ bitcoin_blocks: 1, stacks_blocks_per_bitcoin: 1 })
       .addContractCall({
         contract_id: bridgeId,
-        function_name: "reveal-btc-deposit",
-        function_args: [Cl.bufferFromHex(txid), Cl.uint(0), Cl.bufferFromHex(salt)],
+        function_name: "reveal-btc-address",
+        function_args: [address, Cl.bufferFromHex(salt)],
         fee: 0,
       })
       // Stand in for the sBTC signers sweeping the bitcoin to the treasury.
@@ -369,13 +398,16 @@ burn blocks to skip : ${advance}
       // Two writes, because the bridge checks both halves of what a real sweep
       // does: the sBTC has to exist in the treasury, and the registry has to
       // record the deposit as completed. Minting alone leaves
-      // `confirm-btc-deposit` returning ERR_DEPOSIT_NOT_SWEPT (u304) --
+      // `complete-btc-deposit` returning ERR_DEPOSIT_NOT_SWEPT (u304) --
       // `get-swept-deposit` reads sbtc-registry, not the token.
       //
       // Done by evaluating inside each contract rather than by calling
       // `complete-deposit-wrapper`: that path is gated to the current signer
       // principal and wants a burn header for a height that, after
       // AdvanceBlocks, exists only inside this simulation.
+      //
+      // `sweep-burn-height` has to be *after* the reveal, which is the rule
+      // that stops an address being claimed once its deposit is already swept.
       .addEvalCode(SBTC, `(ft-mint? sbtc-token u${MEMBER_SATS} '${treasuryId})`)
       .addEvalCode(
         SBTC_REGISTRY,
@@ -384,13 +416,18 @@ burn blocks to skip : ${advance}
            recipient: '${treasuryId},
            sweep-txid: 0x${"cd".repeat(32)},
            sweep-burn-hash: 0x${"ef".repeat(32)},
-           sweep-burn-height: u${bond.height - 300},
+           sweep-burn-height: u${pinned.burn_block_height + 2},
          })`,
       )
       .addContractCall({
         contract_id: bridgeId,
-        function_name: "confirm-btc-deposit",
-        function_args: [Cl.bufferFromHex(txid), Cl.uint(0)],
+        function_name: "complete-btc-deposit",
+        function_args: [
+          Cl.bufferFromHex(txid),
+          Cl.uint(0),
+          Cl.bufferFromHex(tx),
+          Cl.list([Cl.bufferFromHex(parent)]),
+        ],
         fee: 0,
       });
   }

@@ -1,0 +1,23 @@
+---
+id: 0
+name: Bind bond 3
+network: testnet
+stacks-node: "https://api.testnet.hiro.so"
+bitcoin-node: "http://blockstack:blockstacksystem@bitcoind.testnet.stacks.co:18332"
+plan:
+  batches:
+  - id: 0
+    transactions:
+    # bind-bond(index, allocation-sats, min-sats) -- operator only.
+    # allocation is capped by pox-5's grant for this bond: 100 000 000 sats.
+    # min-sats must be u0: a launch floor is only accepted for bond 0.
+    - transaction-type: contract-call
+      contract-id: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM.vault-2
+      expected-sender: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM
+      method: bind-bond
+      parameters:
+        - "u3"
+        - "u100000000"
+        - "u0"
+      cost: 50000
+    epoch: '4.0'

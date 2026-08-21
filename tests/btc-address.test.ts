@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { toPoxAddress } from "../ui/btc-address.js";
+import { toPoxAddress } from "../lib/btc-address.js";
 import { createHash } from "node:crypto";
 
 const B58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";

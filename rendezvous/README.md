@@ -4,9 +4,15 @@
 pnpm run fuzz:invariant    # invariant mode
 pnpm run fuzz:test         # property mode
 pnpm exec rv . bond-staker invariant --runs 500 --seed 42   # more control
+
+pnpm run fuzz:invariant:v1 # the same, for the archived pool under v1/
+pnpm run fuzz:test:v1
 ```
 
-Both scripts regenerate the harness first (`pnpm run fuzz:build`).
+Nothing is generated for the first two: the invariants, the properties and the
+pox-5 stand-ins live in `contracts/bond-staker.clar` itself, each form marked
+`;; #[env(simnet)]`. The `:v1` scripts still concatenate a harness, because the
+archived project predates the move.
 
 ## How it is wired
 
@@ -16,22 +22,53 @@ production source:
 
 | file | role |
 | --- | --- |
-| `contracts/bond-staker.clar` | the contract, unmodified |
-| `rendezvous/bond-staker.harness.clar` | invariants, properties, pox-5 stand-ins |
-| `rendezvous/harnesses/bond-staker.clar` | the two concatenated (generated) |
-| `Clarinet-bond-staker.toml` | manifest `rv` picks up for `bond-staker` |
+| `contracts/bond-staker.clar` | the contract *and* the fuzzing surface, in one file |
+| `Clarinet.toml` | the ordinary manifest; `rv` needs no other |
 | `rendezvous/bond-escrow.clar` | stands in for pox-5's custody of the staked sBTC |
+
+Everything in the contract's `Simnet-only` section carries `;; #[env(simnet)]`.
+Clarinet strips those forms from any publish source and compiles the project
+twice — `Checking contracts without #[env(simnet)] code` / `with` — so the
+contract is verified as it will be deployed as well as as simnet sees it.
+`scripts/build-network.mjs` strips them again on the way into `build/`, so the
+file that is checked, sized for its fee and read by an auditor is already free
+of them; only a short note survives to say what is missing and why.
+
+That is why there is no harness file and no concat step. Rendezvous reads
+invariants and properties out of the contract under test, and a copy that has
+to be pasted in is a copy that can drift from what it constrains.
 
 `contracts/bond-treasury.clar` and `contracts/bond-bridge.clar` are deployed
 as-is: they are production code and need no stand-in.
 
-`rv` fuzzes one contract, and that is `bond-staker` — the ledger. The bridge's
-own entry points are covered by the unit tests instead, which drive the real
-sBTC bridge in simnet: its signer principal is readable from the sBTC registry,
-so a test can complete a deposit and accept or reject a withdrawal exactly as
-the signers would. What the fuzzer does cover is the ledger side of the bridge:
-its five bridge-only entry points are in the fuzz surface, and every call to
-them from a wallet is expected to bounce.
+## The early unstake
+
+`unstake-sbtc-early` is the one entry point a stand-in would be worst at
+covering, because the part worth fuzzing is its arithmetic rather than its
+sBTC movement. So the contract splits its ledger half into
+`apply-early-unstake`, and `harness-unstake-early` calls **that** directly --
+only pox-5's side of the hand-back is played by `bond-escrow`. What the fuzzer
+drives there is production code, not a copy of it.
+
+Three checks come with it:
+
+| check | what it covers |
+| --- | --- |
+| `invariant-shares-never-exceed-the-roll` | `total-shares <= staked-sats`, always |
+| `invariant-epoch-credit-is-accounted-for` | `credited` is exactly live shares + `credit-offset` |
+| `test-credit-offset-holds-the-total` | re-basing the offset neither underflows nor moves the total |
+
+The invariant that does most of the work on the new path is an older one:
+`invariant-live-epoch-matches-the-pool` says the live epoch's shares are the
+pool's committed sats. An early unstake has to move both, by the same amount,
+or it trips.
+
+## Fuzzing the archived pool
+
+`v1/` holds the pool as it was before any of this, and it is fuzzed the same
+way through `v1/Clarinet-bond-staker.toml` and
+`v1/rendezvous/bond-staker.harness.clar`, which is still a separate file — see
+`v1/README.md`.
 
 ## Why there are stand-ins
 
