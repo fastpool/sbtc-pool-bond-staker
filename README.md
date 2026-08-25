@@ -392,6 +392,31 @@ phase. A notice expiring in those last blocks is a bind that holds the slot and
 can never be used. So a bond too near its start is passed over instead, and the
 next one along is taken.
 
+### The manager gets control mid-roll
+
+pox-5 does not simply take a staker's sBTC and tell the manager afterwards. In
+`register-for-bond` it calls the manager's `validate-stake!` **first**, and
+only then moves the sats. So for the length of that callback the manager holds
+control while a growing roll's net principal is sitting in this contract, on
+its way from the treasury to pox-5 — and the manager is free to call back in.
+pox-5's own reentrancy guard does not help here: it protects pox-5's entry
+points, not this contract's state.
+
+Everything the pool holds is otherwise reward, so those few lines are the one
+window where that sentence is not true. `principal-in-transit` records the
+amount, `get-unrecognized-rewards` subtracts it, and `sync-rewards` refuses
+outright while it is set (`ERR_PRINCIPAL_IN_TRANSIT`, u130) rather than
+answering about a pool that is mid-move. Every other mutator a manager could
+reach from there moves sBTC, and would blow the roll's own `with-ft`
+post-condition before it could do any harm.
+
+Reported as [#1][issue-1]; `tests/bond-staker-callback.test.ts` stands up a
+manager that does it.
+
+[issue-1]: https://github.com/fastpool/sbtc-pool-bond-staker/issues/1
+
+### Rotating the seat
+
 The operator is a set with an enabled flag, following the signer manager's
 convention down to refusing to change your own entry. Handing over is two
 moves: the sitting operator enables the newcomer, the newcomer retires the old

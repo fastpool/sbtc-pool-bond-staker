@@ -28,6 +28,8 @@ export const SBTC = `${SBTC_DEPLOYER}.sbtc-token`;
 /** The manager the pool stakes through, and the one it can be moved to. */
 export const MANAGER = "fastpool-max500-signer-manager";
 export const ALT_MANAGER = "fastpool-signer-manager";
+/** One that calls `sync-rewards` back from inside `validate-stake!`. */
+export const CALLBACK_MANAGER = "callback-signer-manager";
 export const POOL = "bond-staker";
 export const TREASURY = "bond-treasury";
 export const BRIDGE = "bond-bridge";
@@ -55,6 +57,8 @@ const SIGNER_KEYS: Record<string, string> = {
     "010101010101010101010101010101010101010101010101010101010101010101",
   [ALT_MANAGER]:
     "020202020202020202020202020202020202020202020202020202020202020201",
+  [CALLBACK_MANAGER]:
+    "030303030303030303030303030303030303030303030303030303030303030301",
 };
 
 const accounts = simnet.getAccounts();
@@ -243,6 +247,35 @@ export const unstakeSbtc = (who: string = deployer, manager = MANAGER) =>
     [Cl.principal(managerPrincipal(manager))],
     who,
   ).result;
+
+/** Whether the callback manager passes the pool's refusal on, or swallows it. */
+export const setCallbackPropagate = (on: boolean, sender = deployer) =>
+  simnet.callPublicFn(
+    CALLBACK_MANAGER,
+    "set-propagate",
+    [Cl.bool(on)],
+    sender,
+  ).result;
+
+/** What the callback manager's last `sync-rewards` call answered. */
+export const lastSyncResponse = () =>
+  simnet.callReadOnlyFn(
+    CALLBACK_MANAGER,
+    "get-last-sync-response",
+    [],
+    deployer,
+  ).result;
+
+/** What the pool called its unrecognised rewards mid-roll, seen from inside. */
+export const lastUnrecognized = () =>
+  num(
+    simnet.callReadOnlyFn(
+      CALLBACK_MANAGER,
+      "get-last-unrecognized",
+      [],
+      deployer,
+    ).result,
+  );
 
 export const updateBondRegistration = (
   to: string,

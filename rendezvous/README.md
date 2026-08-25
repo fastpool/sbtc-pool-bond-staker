@@ -80,7 +80,10 @@ without help the fuzzer would only ever see an unbound pool.
 `harness-bind`, `harness-lock` and `harness-release` write exactly the state
 those three write and move the sBTC exactly as pox-5 would — out of
 `bond-treasury` into `bond-escrow` on the way in, back through the pool to the
-treasury on the way out, and only the *net difference* on a roll. Everything
+treasury on the way out, and only the *net difference* on a roll. `harness-lock`
+raises and clears `principal-in-transit` around that net move for the same
+reason `stake` does, so `invariant-no-principal-left-in-transit` is checking a
+flag the run actually sets rather than one it never touches. Everything
 the invariants actually constrain — `deposit`, `withdraw`, `request-exit`,
 `cancel-exit`, `sync-rewards`, `claim-rewards`, `claim-principal` and the whole
 settlement machinery — is untouched production code. The real pox-5 path is

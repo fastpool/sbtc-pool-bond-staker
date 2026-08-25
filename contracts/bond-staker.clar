@@ -233,6 +233,7 @@
 (define-constant ERR_SIGNER_NOT_TRUSTED (err u126))
 (define-constant ERR_ALREADY_TRUSTED (err u127))
 (define-constant ERR_NOT_A_CONTRACT (err u128))
+(define-constant ERR_PRINCIPAL_IN_TRANSIT (err u130))
 ;; u129 was ERR_BELOW_LAUNCH_FLOOR, from when a bind could carry a launch
 ;; floor. Left unused rather than reassigned: an error number is part of what
 ;; a caller reads back, and reusing one changes the meaning of an old code.
@@ -427,6 +428,25 @@
 (define-data-var exiting-ustx uint u0)
 (define-data-var released-sats uint u0)
 (define-data-var released-ustx uint u0)
+
+;; Member principal sitting in *this* contract rather than in the treasury or
+;; in pox-5's custody, for the length of one call and no longer.
+;;
+;; There is exactly one moment it is not zero. pox-5 moves only the difference
+;; between what it already holds for a staker and what the new bond needs, and
+;; it pulls that difference from the staker -- so a growing roll has to top
+;; this contract up out of the treasury before calling `register-for-bond`.
+;;
+;; That matters because everything this contract holds is otherwise reward:
+;; `get-unrecognized-rewards` is the balance less what has been recognised
+;; already, and for those few lines the balance is not all reward. The window
+;; is reachable, too -- `register-for-bond` calls the signer manager's
+;; `validate-stake!` *before* it takes the sBTC, and a manager is free to call
+;; back in. So the amount is recorded rather than assumed away, and every
+;; reader of the balance subtracts it.
+;;
+;; Rolls back with the rest of the call if the roll fails, so it cannot stick.
+(define-data-var principal-in-transit uint u0)
 
 ;;; Coming in and going out over the sBTC bridge
 ;;
@@ -685,12 +705,17 @@
 )
 
 ;; sBTC this contract holds beyond the rewards it has already recognised --
-;; the pot `sync-rewards` distributes. Every satoshi here is reward: the
-;; principal is the treasury's.
+;; the pot `sync-rewards` distributes.
+;;
+;; Every satoshi here is reward. The principal is the treasury's, except for
+;; the few lines of a growing roll where it is passing through on its way to
+;; pox-5, and `principal-in-transit` is exactly that: see its definition for
+;; why the window exists and how it is reachable. Subtracting it is what makes
+;; the sentence above true rather than nearly true.
 (define-read-only (get-unrecognized-rewards)
   (let (
       (balance (get-sbtc-balance))
-      (recognized (get-unclaimed-rewards))
+      (recognized (+ (get-unclaimed-rewards) (var-get principal-in-transit)))
     )
     (if (> balance recognized)
       (- balance recognized)
@@ -1332,9 +1357,16 @@
 
     ;; pox-5 moves only the difference between what it already holds for this
     ;; staker and what the new bond needs, so top the contract up first when
-    ;; the position is growing.
+    ;; the position is growing. Flagged as in transit before it arrives and
+    ;; cleared once pox-5 has it, so that for the lines in between -- which
+    ;; include the signer manager's `validate-stake!`, and so anything that
+    ;; manager cares to call -- this contract's sBTC balance still reads as the
+    ;; rewards it is.
     (if (> sats custodied)
-      (try! (contract-call? .bond-treasury payout (- sats custodied) current-contract))
+      (begin
+        (var-set principal-in-transit (- sats custodied))
+        (try! (contract-call? .bond-treasury payout (- sats custodied) current-contract))
+      )
       u0
     )
 
@@ -1366,6 +1398,9 @@
           )
           registered
         )))))
+      ;; pox-5 has it now.
+      (var-set principal-in-transit u0)
+
       (map-set epochs epoch {
         bond-index: index,
         first-reward-cycle: start-cycle,
@@ -1817,6 +1852,15 @@
 ;; of the oldest epoch still open. Permissionless, and safe to call as often
 ;; as anyone likes: it only ever moves the surplus, and the sub-share
 ;; remainder is left behind for the next call rather than being lost.
+;;
+;; Refused for the one call in which member principal is passing through this
+;; contract on its way to pox-5. `get-unrecognized-rewards` already subtracts
+;; that, so what this assert adds is not correctness but a legible answer: the
+;; caller is inside somebody's roll, and a reward split taken there would be a
+;; split of a pool that is mid-move. It is reachable -- see
+;; `principal-in-transit` -- and it is the only mutator that can be reached
+;; that way, because every other one moves sBTC and would blow the roll's own
+;; post-condition.
 (define-public (sync-rewards)
   (let (
       (epoch (unwrap! (get-reward-epoch) ERR_NOT_STAKED))
@@ -1837,6 +1881,7 @@
       (credited (+ (/ (* shares next-index) PRECISION) (get credit-offset record)))
       (recognized (- credited (get credited record)))
     )
+    (asserts! (is-eq (var-get principal-in-transit) u0) ERR_PRINCIPAL_IN_TRANSIT)
     (asserts! (> recognized u0) ERR_NOTHING_TO_CLAIM)
 
     (map-set epochs epoch
@@ -2636,6 +2681,10 @@
 
     (if (> sats custodied)
       (begin
+        ;; Flagged and cleared exactly as `stake` does it, so that
+        ;; `invariant-no-principal-left-in-transit` is checking a flag this
+        ;; harness actually raises rather than one it never touches.
+        (var-set principal-in-transit (- sats custodied))
         (try! (contract-call? .bond-treasury payout (- sats custodied) current-contract))
         (try! (as-contract?
           ((with-ft 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
@@ -2645,6 +2694,7 @@
             transfer (- sats custodied) tx-sender .bond-escrow none
           ))
         ))
+        (var-set principal-in-transit u0)
       )
       (if (< sats custodied)
         (begin
@@ -2805,6 +2855,15 @@
 ;; #[env(simnet)]
 (define-read-only (invariant-sbtc-covers-unpaid-rewards)
   (>= (get-sbtc-balance) (get-unclaimed-rewards))
+)
+
+;; Principal only ever passes through this contract inside a single call, so
+;; between calls -- which is the only place anything can look -- there is none.
+;; A non-zero reading here would mean a roll left it set, and every balance the
+;; pool reports would be short by that much until the next one cleared it.
+;; #[env(simnet)]
+(define-read-only (invariant-no-principal-left-in-transit)
+  (is-eq (var-get principal-in-transit) u0)
 )
 
 ;; The treasury holds the principal that pox-5 does not: deposits waiting for a

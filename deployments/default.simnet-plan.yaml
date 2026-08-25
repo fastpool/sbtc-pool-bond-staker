@@ -97,6 +97,11 @@ plan:
       path: contracts/bond-bridge.clar
       clarity-version: 6
     - transaction-type: emulated-contract-publish
+      contract-name: callback-signer-manager
+      emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
+      path: tests/contracts/callback-signer-manager.clar
+      clarity-version: 6
+    - transaction-type: emulated-contract-publish
       contract-name: esbee-dao
       emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
       path: contracts/esbee-dao.clar

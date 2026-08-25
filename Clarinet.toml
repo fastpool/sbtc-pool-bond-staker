@@ -42,6 +42,7 @@ path = "tests/contracts/fastpool-signer-manager.clar"
 clarity_version = 6
 epoch = "4.0"
 
+
 # Stands in for pox-5's custody of the staked sBTC, for fuzzing only. It is
 # reached solely from `bond-staker`'s `#[env(simnet)]` section, which is
 # stripped from every network build -- so it is deployed here and nowhere else.
@@ -73,5 +74,15 @@ epoch = "4.0"
 # it calls; `bond-staker` does not know about it.
 [contracts.esbee-dao]
 path = "contracts/esbee-dao.clar"
+clarity_version = 6
+epoch = "4.0"
+
+# A manager that calls the pool back from inside `validate-stake!`, which pox-5
+# invokes mid-`register-for-bond`. Written for this project rather than
+# vendored: no real manager does this, and the point is that the trait does not
+# stop one. See fastpool/sbtc-pool-bond-staker#1. Deployed after `bond-staker`,
+# which it calls.
+[contracts.callback-signer-manager]
+path = "tests/contracts/callback-signer-manager.clar"
 clarity_version = 6
 epoch = "4.0"
