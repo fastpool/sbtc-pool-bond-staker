@@ -29,6 +29,7 @@ import {
   creditedDeposit,
   deployer,
   deposit,
+  ALLOWANCE_SATS,
   MAX_SATS,
   member,
   num,
@@ -344,7 +345,8 @@ describe("bond-bridge: committing and revealing an address", () => {
 
   it("counts a commitment against the pool's allocation", () => {
     bootstrap();
-    expect(commitBtcAddress(alice, digest(), MAX_SATS).type).toBe("ok");
+    // the allocation is the whole allowance now, so filling it takes all of it
+    expect(commitBtcAddress(alice, digest(), ALLOWANCE_SATS).type).toBe("ok");
     expect(deposit(bob, 1)).toBeErr(Cl.uint(105)); // ALLOCATION_EXCEEDED
     cancelBtcCommitment(alice, digest());
     expect(deposit(bob, 1).type).toBe("ok");

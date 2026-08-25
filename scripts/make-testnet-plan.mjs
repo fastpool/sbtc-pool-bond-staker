@@ -136,10 +136,12 @@ ${publish}
     # contract's own deployer may call it, and only once. A separate batch so
     # the publishes above are confirmed first.
     #
-    # The deployer takes the seat rather than the DAO, because \`bind-bond\` is
-    # deliberately not behind a vote: a bond has to be bound inside the window
-    # pox-5 allows, which a voting period, a delay and a quorum cannot be relied
-    # on to hit. The DAO joins as a second operator in the next batch.
+    # The deployer takes the seat rather than the DAO because the DAO cannot
+    # vote until the pool has staked: voting weight is committed shares, and
+    # there are none before then. The DAO joins as a second operator in the
+    # next batch. Binding itself needs no seat -- \`bind-next-bond\` is
+    # permissionless -- so what the seat holds is the signer manager, the
+    # skip, and the sweep.
     - transaction-type: contract-call
       contract-id: ${deployer}.${staker}
       expected-sender: ${deployer}

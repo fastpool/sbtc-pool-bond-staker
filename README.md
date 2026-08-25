@@ -105,7 +105,8 @@ one, and the roll after that is a whole bond term further on.
 | call | who | when |
 | --- | --- | --- |
 | `initialize` | deployer, once | signer manager and operator |
-| `bind-bond` | operator, once per bond | after the bond admin allowlists this contract. Opens deposits |
+| `set-next-bond` | operator | a floor on which bond period comes next, which is how the members skip one. Optional |
+| `bind-next-bond` | **permissionless** | after the bond admin allowlists this contract. No arguments: index, allocation and terms all come from pox-5. Opens deposits |
 | `deposit` | anyone | while a bond is bound and has not started |
 | `deposit-stx` | anyone | to raise the STX behind the pool's sats |
 | `bond-bridge.commit-btc-address` / `reveal-btc-address` | anyone | to join with L1 bitcoin, naming the address it will come from and paying the STX leg |
@@ -119,8 +120,10 @@ one, and the roll after that is a whole bond term further on.
 | `sync-rewards` | anyone | recognises sBTC that has arrived |
 | `claim-rewards` / `claim-principal` | anyone, paid to the member | as rewards settle / as principal is released |
 
-`stake` and `unstake-sbtc` being permissionless is deliberate: the operator
-chooses bonds and signers, but cannot strand the pool by doing nothing.
+`bind-next-bond`, `stake` and `unstake-sbtc` being permissionless is
+deliberate: the operator picks signers and can say which bonds to skip, but
+cannot strand the pool by doing nothing. Binding used to be the exception, and
+the exception cost a bond period the first time nobody was watching.
 
 ## Leaving before the term is up
 
@@ -177,7 +180,7 @@ the new bond: a position is not carried out of an epoch while that epoch can
 still pay. Asking to leave is the one exception — an exit is settled at the
 roll, since it does not depend on what the epoch does next.
 
-A bond that comes and goes unstaked can be replaced by `bind-bond`, so a
+A bond that comes and goes unstaked can be replaced by `bind-next-bond`, so a
 missed window costs one bond period rather than the pool's whole future.
 
 ## Joining and leaving with L1 bitcoin
@@ -315,7 +318,7 @@ announcement is unattributed, and only the operator's
 
 Nothing about a specific bond is in the source — rate, ratio, start height,
 unlock height and this contract's sats allowance are all read from pox-5 at
-`bind-bond`. A new bond needs no code change, and neither does a fresh
+`bind-next-bond`. A new bond needs no code change, and neither does a fresh
 deployment for a separate pool.
 
 The one precondition the contract cannot arrange for itself is the allowlist:
@@ -375,11 +378,19 @@ which may be six months out. A hash that was already on the list when the epoch
 was staked can be moved onto at once — that is the emergency switch, for a
 manager that stops signing.
 
-`bind-bond` carries the same idea: `stake` will not run until `BIND_NOTICE`
-(576 burn blocks, ~4 days) has passed since the bond was bound, so nobody is
-carried into terms they had no chance to read and exit over. Bind too late and
-the bond simply cannot be staked — deposits stay withdrawable and the operator
-binds the next one along.
+`bind-next-bond` carries the same idea: `stake` will not run until
+`BIND_NOTICE` (576 burn blocks, ~4 days) has passed since the bond was bound,
+so nobody is carried into terms they had no chance to read and exit over.
+
+Binding late is no longer a way to lose a bond. The walk refuses a period
+unless the whole notice runs out **before the stake window opens** —
+`BIND_NOTICE + STAKE_WINDOW`, 864 blocks — rather than merely before the bond
+starts. The looser rule reads as though it would do, since `stake` only wants
+the notice over and the bond not yet begun, but a bond period starts on a
+reward cycle boundary and pox-5 refuses to register inside that cycle's prepare
+phase. A notice expiring in those last blocks is a bind that holds the slot and
+can never be used. So a bond too near its start is passed over instead, and the
+next one along is taken.
 
 The operator is a set with an enabled flag, following the signer manager's
 convention down to refusing to change your own entry. Handing over is two
@@ -397,37 +408,68 @@ only ever narrows what the operator can do.
 
 ## Launching
 
-The pool is started by whoever turns up, not by whoever deployed it. `stake` is
-permissionless and always was, so there is no launch button for anyone to hold
-— the only question is whether enough of a pool gathered to be worth starting,
-and that is a number rather than a vote.
+The pool is started by whoever turns up, not by whoever deployed it. Neither
+half of starting it is anybody's to hold: `stake` was always permissionless,
+and `bind-next-bond` is too.
 
-`bind-bond(index, allocation-sats, min-sats)` sets it. Below the floor, `stake`
-returns `ERR_BELOW_LAUNCH_FLOOR (u129)`, nothing is committed, and every deposit
-stays withdrawable. Half the allocation is a reasonable floor; zero starts on
-whatever has gathered.
+`bind-next-bond()` takes no arguments, and that is the whole reason it needs no
+permission. The index is the earliest bond period pox-5 has set up with this
+contract on its allowlist, far enough out that the members' notice runs before
+the stake window opens; the allocation is the whole of what pox-5 allows this
+pool; every term is read off the bond. Two callers write the same state, so
+there is nothing to choose and nothing to grief.
 
-A floor is only accepted for **bond 0, the genesis bond** — everywhere else
-`min-sats` must be zero, or `bind-bond` returns `ERR_INVALID_AMOUNT`. A launch
-is the one moment where refusing to start is the better outcome. A floor on a
-roll is not: miss it and the pool winds down at term, which is worse than
-rolling light. Confining it to bond 0 also makes the check in `stake` inert
-everywhere else without `stake` having to know which bond it is looking at.
+    find-next-bond()      the index it would take, or none
+    bindable-bond(i)      whether period i is set up, allowlisted, and in time
+    earliest-bindable-bond()
+                          where the walk starts: the clock, the roll and the
+                          members' floor, whichever is highest
+
+The one judgement left is the members'. `set-next-bond(index)` puts a floor
+under the walk — `N + 1` skips bond N, `M` aims at bond M, `0` clears it — and
+it is a floor rather than an exact pin on purpose: a pin on a period the bond
+admin never sets up would strand the pool until another vote cleared it, which
+is the liveness problem the change exists to remove. Through the DAO it is
+`propose-next-bond` / `execute-next-bond`, and it binds nothing itself, so it
+can be voted through long before any window and simply waits there.
+
+**A skip has to be in place before the bond admin's `setup-bond` lands.** The
+floor is read at the bind, and a bind cannot be replaced until the bond it
+named has started, so the moment a period is allowlisted anyone may take it and
+a vote still inside its voting period has missed. That is the price of a bind
+nobody has to be awake for, and it is a smaller price than it looks: what the
+members lose is the *skip*, not the exit. `BIND_NOTICE` still runs before
+`stake` can be called, and withdrawing during it is open to everyone.
+
+There is no launch floor. `bind-bond`'s `min-sats` and `ERR_BELOW_LAUNCH_FLOOR`
+are gone: a floor was a number one caller chose that could stop the pool
+starting at all, and with binding open to anyone there is nobody to trust with
+it. The contract starts on whatever turned up.
+
+Be clear about what that gives up. `stake` is permissionless and the window is
+288 burn blocks wide, so anyone may call it at the first block of the window
+and commit the pool for its whole 12-cycle term at whatever size it had reached
+by then; a front end saying a pool is worth waiting to fill cannot stop them.
+Every roll already worked this way — a floor was only ever accepted on bond 0 —
+so what has changed is the launch, and the argument for changing it is that the
+floor had no good owner. It could not be the DAO, which cannot vote before the
+pool has staked, and leaving it with the deployer key made the launch exactly
+the thing the rest of this is built to avoid.
 
     a. deploy the four contracts
     b. trust-signer-manager(hash) for each vetted signer manager
     c. update-operator(.esbee-dao, true)
-    d. bind-bond(index, allocation, allocation / 2)
-    e. members deposit; anyone calls stake once the floor is met
+    d. anyone calls bind-next-bond once the bond admin has allowlisted the pool
+    e. members deposit; anyone calls stake inside the window
     f. the DAO votes the deployer key out
 
 Note the ordering of (c) and (f). The DAO cannot vote before the pool has
 staked — voting weight is committed shares, and there are none until then — so
 the deployer necessarily holds the operator seat through the launch window and
-the DAO retires it afterwards. During that window the deployer can bind a bond,
-but `BIND_NOTICE` and the floor both apply, and members can withdraw right up
-until `stake`. It is a real trust window, and it is bounded by the fact that
-nothing the operator does can reach a deposit.
+the DAO retires it afterwards. That window is narrower than it was: binding is
+no longer part of it, and what the seat still holds is the signer manager, the
+skip and the sweep. Members can withdraw right up until `stake`, and nothing
+the operator does can reach a deposit.
 
 On testnet, see [TESTNET.md](TESTNET.md) — the allowlist grant is keyed on the
 staker's principal, which decides what the contract has to be *named*.
@@ -435,14 +477,15 @@ staker's principal, which decides what the contract has to be *named*.
 ## Esbee DAO
 
 The operator seat can be held by a contract instead of a key. `esbee-dao` puts
-five of the operator's powers behind a vote of the pool's own members — see
+all five of the operator's powers behind a vote of the pool's own members — see
 [brand/](brand/) for where the name comes from.
 
-Binding is not among them, and deliberately so. `bind-bond` has to land inside
-a window pox-5 fixes — after the bond is set up, and `BIND_NOTICE` before the
-stake window closes — and a vote that takes a voting period plus an execution
-delay to clear cannot be relied on to hit it. The seat can hold both: a key
-that binds, and the DAO for everything a vote can be trusted to time.
+Binding is not one of the five, and no longer needs to be. `bind-next-bond` has
+to land inside a window pox-5 fixes, which a vote with a voting period and an
+execution delay cannot be relied on to hit — but it also takes no arguments, so
+there is nothing to vote *about*. What the DAO holds instead is
+`set-next-bond`: the decision to sit a bond out, which can be taken at leisure
+and simply waits for whoever binds.
 
     bond-staker.update-operator(.esbee-dao, true)   # sitting operator hands over
     bond-staker.update-operator(<old key>, false)   # ...and retires
@@ -503,8 +546,7 @@ being tested is the shape of the run, not the yields it implies.
 **The genesis bond is index 1, not 0.** The bond starting at burn height 966,350
 (reward cycle 143, [announced here][genesis]) is index 1; index 0 starts a cycle
 earlier, at 962,150. The script resolves the index from the height rather than
-assuming it. This matters beyond naming: a launch floor is only accepted on bond
-0, so a pool binding the genesis bond starts on whatever turned up.
+assuming it.
 
 [genesis]: https://www.stacks.co/blog/the-genesis-bond-starts-at-bitcoin-block-966-350
 
@@ -525,8 +567,9 @@ regenerating overwrites it in place (`--template` puts it back).
 
 The plan is three batches, each confirmed before the next: publish
 `bond-treasury`, the pool, `bond-bridge` and `esbee-dao` in dependency order;
-call `initialize`; then `update-operator(.esbee-dao, true)` to seat the DAO. The deployer takes the operator seat at `initialize` rather than the DAO,
-because `bind-bond` is deliberately not behind a vote — see the launch sequence
+call `initialize`; then `update-operator(.esbee-dao, true)` to seat the DAO.
+The deployer takes the operator seat at `initialize` rather than the DAO
+because the DAO cannot vote until the pool has staked — see the launch sequence
 above, where the DAO retires the key afterwards.
 
 The deployer address is a required argument because it appears throughout and
@@ -562,10 +605,10 @@ registered with pox-5. The default is
 testnet's signer set it has the largest delegation and stays in through cycle
 10. Pass a different one as the second argument if that changes.
 
-Deploying gets you an address, not a working pool: `bind-bond` returns
-`ERR_NOT_ALLOWLISTED (u104)` until the bond admin names this contract in a
-`setup-bond`, and pox-5 only writes allowances there, so it has to be a bond
-that has not been created yet.
+Deploying gets you an address, not a working pool: `find-next-bond` answers
+`none` and `bind-next-bond` returns `ERR_BOND_NOT_FOUND (u103)` until the bond
+admin names this contract in a `setup-bond`, and pox-5 only writes allowances
+there, so it has to be a bond that has not been created yet.
 
 ## Tests
 
@@ -581,5 +624,18 @@ the fuzzing surface is put together and what it has caught.
 `v1/` is a separate archived project with its own manifest, tests and scripts
 (`pnpm run test:v1`, `pnpm run fuzz:invariant:v1`). It is not part of this one.
 
-The signer-manager contracts the tests stake through come from the sibling
-`fastpool-pox-5` project, referenced by relative path in `Clarinet.toml`.
+The two signer-manager contracts the tests stake through are vendored under
+`tests/contracts/`, so a checkout of this repository is the whole of what
+`pnpm test` needs. `fastpool-max500-signer-manager` is the published mainnet
+contract -- the one this pool is built to stake through -- with the pox-5 boot
+address rewritten for simnet; `fastpool-signer-manager` is v1, and is there to
+be the *other* manager, since the pool vets managers by code hash and can be
+moved between them.
+
+    pnpm run build:managers   refetch and rewrite both
+
+`pnpm test` runs the same script with `--check` first, which reports drift
+without changing anything and without failing the run. They were referenced by
+relative path out of the sibling `fastpool-pox-5` project until that project
+renamed one of them, at which point the whole suite stopped starting and said
+only that a worker had failed to start.

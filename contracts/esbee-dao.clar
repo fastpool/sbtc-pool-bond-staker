@@ -2,17 +2,20 @@
 ;;
 ;; The pool's operator, held by its members rather than by a key.
 ;;
-;; `bond-staker` lets an operator do five things: bind the next bond, move the
-;; pool between vetted signer managers, add and remove hashes from the trusted
-;; list, change who the operators are, and sweep unattributed principal. It can
-;; never touch deposits, and it can never stop members leaving. This contract
-;; puts four of the five behind a vote.
+;; `bond-staker` lets an operator do five things: put a floor under which bond
+;; period comes next, move the pool between vetted signer managers, add and
+;; remove hashes from the trusted list, change who the operators are, and sweep
+;; unattributed principal. It can never touch deposits, and it can never stop
+;; members leaving. This contract puts all five behind a vote.
 ;;
-;; Binding is not among them, and deliberately. A bond has to be bound inside
-;; the window pox-5 allows for it, which a vote with a period, a delay and a
-;; quorum cannot be relied on to hit; a missed window costs the pool a whole
-;; bond period. So binding stays with a keyed operator, and the DAO's hold over
-;; it is the one that matters: it decides who the operators are.
+;; Binding itself is not on that list and needs no vote: `bind-next-bond` is
+;; permissionless and takes no arguments, so anyone can make the call and every
+;; caller writes the same state. What a vote is for is the judgement the
+;; arithmetic cannot make -- sitting a bond out -- and `set-next-bond` is that
+;; and nothing more. A bond has to be bound inside the window pox-5 allows for
+;; it, which a vote with a period, a delay and a quorum cannot be relied on to
+;; hit; the point of the floor is that it can be set long before the window and
+;; simply waits there for whoever binds.
 ;;
 ;; Install it by having the sitting operator enable it and then retire itself:
 ;;
@@ -115,6 +118,8 @@
     target: (optional principal),
     previous: (optional principal),
     enabled: (optional bool),
+    ;; A bond period, for `next-bond`. The only kind that carries a number.
+    index: (optional uint),
     proposer: principal,
     ;; The epoch the pool was in when this was raised. If it rolls, the
     ;; membership that voted is no longer the membership that would live with
@@ -233,6 +238,7 @@
   target: (optional principal),
   previous: (optional principal),
   enabled: (optional bool),
+  index: (optional uint),
 }))
   (let ((id (var-get proposal-count)))
     ;; Only a member with something committed may raise one. Nothing else is a
@@ -264,6 +270,7 @@
 (define-constant NO_HASH none)
 (define-constant NO_PRINCIPAL none)
 (define-constant NO_FLAG none)
+(define-constant NO_INDEX none)
 
 (define-public (propose-trust-signer (code-hash (buff 32)))
   (open-proposal {
@@ -272,6 +279,7 @@
     target: NO_PRINCIPAL,
     previous: NO_PRINCIPAL,
     enabled: NO_FLAG,
+    index: NO_INDEX,
   })
 )
 
@@ -282,6 +290,7 @@
     target: NO_PRINCIPAL,
     previous: NO_PRINCIPAL,
     enabled: NO_FLAG,
+    index: NO_INDEX,
   })
 )
 
@@ -295,6 +304,7 @@
     target: (some manager),
     previous: (some old-manager),
     enabled: NO_FLAG,
+    index: NO_INDEX,
   })
 )
 
@@ -308,6 +318,31 @@
     target: (some who),
     previous: NO_PRINCIPAL,
     enabled: (some enabled),
+    index: NO_INDEX,
+  })
+)
+
+;; Skip a bond, or aim at a particular one.
+;;
+;; `bind-next-bond` takes the earliest period pox-5 has set this pool up for.
+;; This is how the members say "not that one": a floor of N + 1 skips bond N,
+;; and a floor of M aims at bond M. It binds nothing itself, so it can be voted
+;; on at any time and sits there until the next bind reads it.
+;;
+;; Which is the one thing to know about timing it: the floor is read *at* the
+;; bind, and a bind cannot be replaced until the bond it named has started. So
+;; a skip has to be through before the bond admin allowlists the period. A vote
+;; that opens once the period is already bindable has missed it -- anyone may
+;; bind in the meantime, and what the members have left then is the notice and
+;; the exit rather than the skip.
+(define-public (propose-next-bond (index uint))
+  (open-proposal {
+    kind: "next-bond",
+    code-hash: NO_HASH,
+    target: NO_PRINCIPAL,
+    previous: NO_PRINCIPAL,
+    enabled: NO_FLAG,
+    index: (some index),
   })
 )
 
@@ -318,6 +353,7 @@
     target: (some recipient),
     previous: NO_PRINCIPAL,
     enabled: NO_FLAG,
+    index: NO_INDEX,
   })
 )
 
@@ -455,6 +491,16 @@
       (try! (contract-call? .bond-staker update-operator
         (unwrap-panic (get target proposal))
         (unwrap-panic (get enabled proposal))
+      ))
+    )))
+  )
+)
+
+(define-public (execute-next-bond (id uint))
+  (let ((proposal (try! (authorize-execution id "next-bond"))))
+    (ok (try! (as-contract? ()
+      (try! (contract-call? .bond-staker set-next-bond
+        (unwrap-panic (get index proposal))
       ))
     )))
   )

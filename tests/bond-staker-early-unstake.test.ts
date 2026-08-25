@@ -21,7 +21,8 @@ import {
   ALT_MANAGER,
   advanceToBurnHeight,
   avoidPreparePhase,
-  bindBond,
+  bindNextBond,
+  boundBond,
   BOND_INDEX,
   bondStartHeight,
   bootstrap,
@@ -79,9 +80,10 @@ function stakeFirstBond() {
 }
 
 /** Bind the next bond and roll into it, inside its stake window. */
-function rollInto(index = NEXT_BOND_INDEX, maxSats = MAX_SATS) {
-  setupBond(index);
-  expect(bindBond(index, maxSats).type).toBe("ok");
+function rollInto(index = NEXT_BOND_INDEX, allowanceSats = ALLOWANCE_SATS) {
+  setupBond(index, allowanceSats);
+  expect(bindNextBond().type).toBe("ok");
+  expect(Number(boundBond()["bond-index"])).toBe(index);
   advanceToBurnHeight(bondStartHeight(index) - 288);
   return stake();
 }
@@ -320,7 +322,7 @@ describe("bond-staker: an exit does not disturb a scaled roll", () => {
     // A dearer bond -- twice the STX per sat -- so the pool's STX carries only
     // part of what wants in and every member is scaled back by one fraction.
     setupBond(NEXT_BOND_INDEX, ALLOWANCE_SATS, STX_VALUE_RATIO * 2);
-    expect(bindBond(NEXT_BOND_INDEX, MAX_SATS).type).toBe("ok");
+    expect(bindNextBond().type).toBe("ok");
     const carolSats = ALICE_SATS;
     expect(deposit(carol, carolSats).type).toBe("ok");
 

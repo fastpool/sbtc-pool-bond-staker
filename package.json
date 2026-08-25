@@ -6,7 +6,9 @@
   "private": true,
   "packageManager": "pnpm@11.9.0",
   "scripts": {
+    "pretest": "node scripts/build-test-managers.mjs --check",
     "test": "vitest run",
+    "build:managers": "node scripts/build-test-managers.mjs",
     "test:report": "vitest run -- --coverage --costs",
     "test:watch": "chokidar \"tests/**/*.ts\" \"contracts/**/*.clar\" -c \"pnpm run test:report\"",
     "fuzz:invariant": "rv . bond-staker invariant",

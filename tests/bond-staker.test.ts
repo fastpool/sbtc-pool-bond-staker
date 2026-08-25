@@ -22,7 +22,9 @@ import {
   unattributedPrincipal,
   ALLOWANCE_SATS,
   ALT_MANAGER,
-  bindBond,
+  bindNextBond,
+  nextBond,
+  setNextBond,
   BOND_INDEX,
   bondStartHeight,
   bootstrap,
@@ -95,9 +97,10 @@ function stakeFirstBond() {
 }
 
 /** Bind the next bond and roll into it, inside its stake window. */
-function rollInto(index = NEXT_BOND_INDEX, maxSats = MAX_SATS) {
-  setupBond(index);
-  expect(bindBond(index, maxSats).type).toBe("ok");
+function rollInto(index = NEXT_BOND_INDEX, allowanceSats = ALLOWANCE_SATS) {
+  setupBond(index, allowanceSats);
+  expect(bindNextBond().type).toBe("ok");
+  expect(Number(boundBond()["bond-index"])).toBe(index);
   advanceToBurnHeight(bondStartHeight(index) - 288);
   return stake();
 }
@@ -114,13 +117,22 @@ describe("bond-staker: initialization and binding", () => {
     expect(initializePool()).toBeErr(Cl.uint(101)); // ALREADY_INITIALIZED
   });
 
-  it("will not bind a bond that does not exist or does not want us", () => {
+  it("finds nothing to bind until a bond wants us", () => {
     registerSignerManager();
     initializePool();
-    expect(bindBond(5)).toBeErr(Cl.uint(103)); // BOND_NOT_FOUND
+    expect(nextBond()).toBe(null);
+    expect(bindNextBond()).toBeErr(Cl.uint(103)); // BOND_NOT_FOUND
     setupBond();
-    expect(bindBond(BOND_INDEX, ALLOWANCE_SATS + 1)).toBeErr(Cl.uint(105));
-    expect(bindBond(BOND_INDEX, MAX_SATS, alice)).toBeErr(Cl.uint(100));
+    expect(nextBond()).toBe(BOND_INDEX);
+  });
+
+  it("lets anyone bind, and takes the whole allowance", () => {
+    registerSignerManager();
+    initializePool();
+    setupBond();
+    // Not the operator, and it does not matter: the call chooses nothing.
+    expect(bindNextBond(alice).type).toBe("ok");
+    expect(Number(boundBond()["max-sats"])).toBe(ALLOWANCE_SATS);
   });
 
   it("copies the bond's parameters from pox-5", () => {
@@ -129,7 +141,7 @@ describe("bond-staker: initialization and binding", () => {
 
     expect(bond.bound).toBe(true);
     expect(Number(bond["bond-index"])).toBe(BOND_INDEX);
-    expect(Number(bond["max-sats"])).toBe(MAX_SATS);
+    expect(Number(bond["max-sats"])).toBe(ALLOWANCE_SATS);
     expect(Number(bond["stx-value-ratio"])).toBe(STX_VALUE_RATIO);
     expect(Number(bond["min-ustx-ratio"])).toBe(MIN_USTX_RATIO);
     expect(Number(bond["start-height"])).toBe(bondStart);
@@ -138,7 +150,7 @@ describe("bond-staker: initialization and binding", () => {
     // the stake window opens 288 burn blocks before the bond starts
     expect(Number(bond["stake-opens-at"])).toBe(bondStart - 288);
 
-    expect(bindBond()).toBeErr(Cl.uint(119)); // BOND_ALREADY_BOUND
+    expect(bindNextBond()).toBeErr(Cl.uint(119)); // BOND_ALREADY_BOUND
   });
 });
 
@@ -211,7 +223,8 @@ describe("bond-staker: the 95/5 deposit split", () => {
 
   it("rejects a zero deposit and caps the pool at its allocation", () => {
     expect(deposit(alice, 0)).toBeErr(Cl.uint(116)); // INVALID_AMOUNT
-    expect(deposit(alice, MAX_SATS).type).toBe("ok");
+    // the allocation is the whole of what pox-5 allowlisted the pool for
+    expect(deposit(alice, ALLOWANCE_SATS).type).toBe("ok");
     expect(deposit(bob, 1)).toBeErr(Cl.uint(105)); // ALLOCATION_EXCEEDED
   });
 });
@@ -362,9 +375,12 @@ describe("bond-staker: rolling into the next bond", () => {
   });
 
   it("will not bind a bond that overlaps the live one", () => {
-    // bond 7 still runs inside bond 2's term; only 2 + 6 or later works
+    // bond 7 still runs inside bond 2's term, so the walk starts past it at
+    // 2 + 6 and never sees it -- there is nothing to bind, rather than a bad
+    // argument to reject.
     setupBond(NEXT_BOND_INDEX - 1);
-    expect(bindBond(NEXT_BOND_INDEX - 1)).toBeErr(Cl.uint(120));
+    expect(nextBond()).toBe(null);
+    expect(bindNextBond()).toBeErr(Cl.uint(103)); // BOND_NOT_FOUND
   });
 
   it("carries the whole position across without unwinding it", () => {
@@ -395,7 +411,7 @@ describe("bond-staker: rolling into the next bond", () => {
 
   it("takes on new members at the roll", () => {
     setupBond(NEXT_BOND_INDEX);
-    bindBond(NEXT_BOND_INDEX);
+    bindNextBond();
     expect(deposit(carol, ALICE_SATS).type).toBe("ok");
     // carol's sats sit in the treasury until the roll commits them
     expect(treasuryBalance()).toBe(ALICE_SATS);
@@ -424,7 +440,7 @@ describe("bond-staker: rolling into the next bond", () => {
     setupBond(NEXT_BOND_INDEX); // create it while there is still time
     advanceToBurnHeight(unlockHeight);
     expect(unstakeSbtc().type).toBe("ok");
-    expect(bindBond(NEXT_BOND_INDEX)).toBeErr(Cl.uint(112)); // ALREADY_UNSTAKED
+    expect(bindNextBond()).toBeErr(Cl.uint(112)); // ALREADY_UNSTAKED
   });
 });
 
@@ -479,7 +495,7 @@ describe("bond-staker: leaving at a roll", () => {
 
   it("refunds a queued deposit immediately", () => {
     setupBond(NEXT_BOND_INDEX);
-    bindBond(NEXT_BOND_INDEX);
+    bindNextBond();
     const sbtcBefore = sbtcBalance(alice);
     deposit(alice, ALICE_SATS);
     expect(requestExit(alice).type).toBe("ok");
@@ -506,8 +522,8 @@ describe("bond-staker: leaving at a roll", () => {
 
   it("frees allocation room for someone else", () => {
     // fill the pool right up, then have alice leave
-    setupBond(NEXT_BOND_INDEX);
-    bindBond(NEXT_BOND_INDEX, POOL_SATS);
+    setupBond(NEXT_BOND_INDEX, POOL_SATS);
+    bindNextBond();
     expect(deposit(carol, 1)).toBeErr(Cl.uint(105)); // ALLOCATION_EXCEEDED
     requestExit(alice);
     expect(deposit(carol, ALICE_SATS).type).toBe("ok");
@@ -529,7 +545,7 @@ describe("bond-staker: leaving at a roll", () => {
     // and she can join the bond after next like anyone else
     const next = NEXT_BOND_INDEX + 6;
     setupBond(next);
-    expect(bindBond(next, MAX_SATS).type).toBe("ok");
+    expect(bindNextBond().type).toBe("ok");
     expect(deposit(alice, ALICE_SATS).type).toBe("ok");
     expect(Number(settledMember(alice)["queued-sats"])).toBe(ALICE_SATS);
 
@@ -542,7 +558,7 @@ describe("bond-staker: leaving at a roll", () => {
 
   it("keeps the exit flag set until the roll actually realises it", () => {
     setupBond(NEXT_BOND_INDEX);
-    expect(bindBond(NEXT_BOND_INDEX, MAX_SATS).type).toBe("ok");
+    expect(bindNextBond().type).toBe("ok");
 
     requestExit(alice);
     // still pending: the pool has not rolled, so it must still bar deposits
@@ -636,7 +652,7 @@ describe("bond-staker: per-bond reward accounting", () => {
     // alice leaves at the roll; carol joins
     requestExit(alice);
     setupBond(NEXT_BOND_INDEX);
-    bindBond(NEXT_BOND_INDEX);
+    bindNextBond();
     deposit(carol, ALICE_SATS);
     advanceToBurnHeight(bondStartHeight(NEXT_BOND_INDEX) - 288);
     expect(stake().type).toBe("ok");
@@ -967,7 +983,7 @@ describe("bond-treasury", () => {
 
     requestExit(alice);
     setupBond(NEXT_BOND_INDEX);
-    bindBond(NEXT_BOND_INDEX);
+    bindNextBond();
     deposit(carol, ALICE_SATS);
     const pool = () => poolTotals();
     expect(treasuryBalance()).toBe(Number(pool()["queued-sats"]));
@@ -983,9 +999,12 @@ describe("bond-treasury", () => {
 
 describe("bond-staker: a roll that does not fit", () => {
   /** Bond 8, priced so the pool's STX carries only half its sats. */
-  function bindDearerBond(ratio = STX_VALUE_RATIO * 2, maxSats = MAX_SATS) {
-    setupBond(NEXT_BOND_INDEX, ALLOWANCE_SATS, ratio);
-    expect(bindBond(NEXT_BOND_INDEX, maxSats).type).toBe("ok");
+  function bindDearerBond(
+    ratio = STX_VALUE_RATIO * 2,
+    allowanceSats = ALLOWANCE_SATS,
+  ) {
+    setupBond(NEXT_BOND_INDEX, allowanceSats, ratio);
+    expect(bindNextBond().type).toBe("ok");
   }
 
   it("shows the shortfall before the window opens", () => {
@@ -1058,8 +1077,8 @@ describe("bond-staker: a roll that does not fit", () => {
   it("scales back to the allocation when that is what bites", () => {
     stakeFirstBond();
     // same pricing, but the bond only has room for a quarter of the pool
-    setupBond(NEXT_BOND_INDEX);
-    expect(bindBond(NEXT_BOND_INDEX, POOL_SATS / 4).type).toBe("ok");
+    setupBond(NEXT_BOND_INDEX, POOL_SATS / 4);
+    expect(bindNextBond().type).toBe("ok");
 
     const preview = stakePreview();
     expect(preview["allocation-limited"]).toBe(true);
@@ -1104,7 +1123,7 @@ describe("bond-staker: a roll that does not fit", () => {
     // a bond a million times dearer in STX terms
     setupBond(NEXT_BOND_INDEX, ALLOWANCE_SATS, STX_VALUE_RATIO * 1_000_000);
     // the first bond came and went unstaked, so bind can replace it
-    expect(bindBond(NEXT_BOND_INDEX).type).toBe("ok");
+    expect(bindNextBond().type).toBe("ok");
     advanceToBurnHeight(bondStartHeight(NEXT_BOND_INDEX) - 288);
     expect(stake().type).toBe("ok");
 
@@ -1128,7 +1147,7 @@ describe("bond-staker: a missed bond", () => {
 
     // the pool is not stuck: the operator binds the next bond along
     setupBond(NEXT_BOND_INDEX);
-    expect(bindBond(NEXT_BOND_INDEX).type).toBe("ok");
+    expect(bindNextBond().type).toBe("ok");
     expect(deposit(bob, BOB_SATS).type).toBe("ok");
 
     advanceToBurnHeight(bondStartHeight(NEXT_BOND_INDEX) - 288);
@@ -1140,7 +1159,7 @@ describe("bond-staker: a missed bond", () => {
   it("cannot be replaced while its window is still ahead", () => {
     bootstrap();
     expect(boundBond().stakeable).toBe(true);
-    expect(bindBond(BOND_INDEX)).toBeErr(Cl.uint(119)); // ALREADY_BOUND
+    expect(bindNextBond()).toBeErr(Cl.uint(119)); // ALREADY_BOUND
   });
 });
 
@@ -1309,37 +1328,43 @@ describe("bond-staker: the ledger's bridge hooks", () => {
 });
 
 describe("bond-staker: notice on a bound bond", () => {
-  it("will not stake a bond the members have had no time to read", () => {
+  // The notice has to be over before the stake window opens, so the last
+  // moment a bond can be bound is BIND_NOTICE + STAKE_WINDOW before its start.
+  const LAST_BIND = 576 + 288;
+
+  it("will not take a bond it cannot give the members notice on", () => {
     registerSignerManager();
     initializePool();
     setupBond(); // advances to two cycles before the bond starts
     const bondStart = bondStartHeight(BOND_INDEX);
 
-    // bound late, deep inside the stake window
-    advanceToBurnHeight(bondStart - 300);
-    expect(bindBond().type).toBe("ok");
-    const bond = boundBond();
-    expect(Number(bond["notice-ends-at"])).toBe(bondStart - 300 + 576);
+    advanceToBurnHeight(bondStart - LAST_BIND);
+    expect(nextBond()).toBe(BOND_INDEX);
 
-    deposit(alice, ALICE_SATS);
-    advanceToBurnHeight(bondStart - 288);
-    // inside the window, but the notice has not run out
-    expect(stake()).toBeErr(Cl.uint(108)); // TOO_EARLY
-
-    // and it never will: the notice outlasts the bond's start, so a bond bound
-    // this late simply cannot be staked. The deposit is not stuck -- it stays
-    // withdrawable, and the operator can bind the next bond along.
-    advanceToBurnHeight(bondStart);
-    expect(stake()).toBeErr(Cl.uint(109)); // TOO_LATE
-    expect(withdraw(alice).type).toBe("ok");
+    // one block later the notice would run into the window, and the walk
+    // passes the bond by rather than holding a slot it could never use
+    advanceToBurnHeight(bondStart - LAST_BIND + 1);
+    expect(nextBond()).toBe(null);
+    expect(bindNextBond()).toBeErr(Cl.uint(103)); // BOND_NOT_FOUND
   });
 
-  it("stakes normally when the bond was bound in good time", () => {
-    const { bondStart } = bootstrap();
-    const bond = boundBond();
-    // bound two cycles out, so the notice is long gone by the window
-    expect(Number(bond["notice-ends-at"])).toBeLessThan(bondStart - 288);
+  it("gives the members the whole notice, and stakes the moment it is up", () => {
+    registerSignerManager();
+    initializePool();
+    setupBond();
+    const bondStart = bondStartHeight(BOND_INDEX);
+
+    // bound at the very last moment the rule allows
+    advanceToBurnHeight(bondStart - LAST_BIND);
+    expect(bindNextBond().type).toBe("ok");
+    expect(Number(boundBond()["notice-ends-at"])).toBe(bondStart - 288);
+
     deposit(alice, ALICE_SATS);
+    // a block before the window, the notice is still running
+    advanceToBurnHeight(bondStart - 289);
+    expect(stake()).toBeErr(Cl.uint(108)); // TOO_EARLY
+
+    // and the window opens exactly as the notice ends
     advanceToBurnHeight(bondStart - 288);
     expect(stake().type).toBe("ok");
   });
@@ -1371,11 +1396,13 @@ describe("bond-staker: rotating the operator", () => {
     // the newcomer retires the old key
     expect(updateOperator(deployer, false, alice).type).toBe("ok");
     expect(isOperator(deployer)).toBe(false);
-    expect(bindBond(NEXT_BOND_INDEX)).toBeErr(Cl.uint(100)); // old key is out
+    // binding needs no seat, so the seat is tested on what it still holds
+    expect(setNextBond(NEXT_BOND_INDEX)).toBeErr(Cl.uint(100)); // old key out
 
     // and the new one can do the job
+    expect(setNextBond(NEXT_BOND_INDEX, alice).type).toBe("ok");
     setupBond(NEXT_BOND_INDEX);
-    expect(bindBond(NEXT_BOND_INDEX, MAX_SATS, alice).type).toBe("ok");
+    expect(bindNextBond().type).toBe("ok");
   });
 
   it("cannot stop members getting their money back", () => {
@@ -1397,37 +1424,46 @@ describe("bond-staker: rotating the operator", () => {
 });
 
 
-describe("bond-staker: the genesis launch floor", () => {
-  // The floor is only accepted on pox-5 bond 0, and bond 0 began at burn
-  // height 0 -- `setup-bond` for it is already too late in simnet, and always
-  // will be. So what is testable here is that the restriction holds; the
-  // enforcement itself is exercised by the rendezvous harness, which sets the
-  // floor directly and mirrors `stake`'s checks.
-  it("refuses a floor on any bond but the genesis one", () => {
+describe("bond-staker: the members' floor on the next bond", () => {
+  it("is only for operators, and only within reach", () => {
+    registerSignerManager();
+    initializePool();
+    expect(setNextBond(BOND_INDEX + 1, alice)).toBeErr(Cl.uint(100));
+    expect(setNextBond(BOND_INDEX + 1).type).toBe("ok");
+    expect(Number(poolConfig()["min-bond-index"])).toBe(BOND_INDEX + 1);
+
+    // a floor nobody could ever reach is refused rather than stored: pox-5
+    // works a start height out by multiplying, and an absurd index aborts
+    expect(setNextBond(1_000_000_000)).toBeErr(Cl.uint(120)); // INVALID_BOND_INDEX
+    expect(Number(poolConfig()["min-bond-index"])).toBe(BOND_INDEX + 1);
+  });
+
+  it("caps the distance, not the step", () => {
+    registerSignerManager();
+    initializePool();
+
+    // MAX_SKIP is measured against the protocol's floor, so the reach does not
+    // move when a floor is set. Otherwise a floor would be part of what bounds
+    // the next one and the pair could be walked out a hundred at a time.
+    const reach = num(readPool("earliest-reachable-bond")) + 100;
+    expect(setNextBond(reach).type).toBe("ok");
+    expect(setNextBond(reach + 1)).toBeErr(Cl.uint(120)); // INVALID_BOND_INDEX
+  });
+
+  it("skips the bond it is set past, and gives it back when cleared", () => {
     registerSignerManager();
     initializePool();
     setupBond();
-    expect(bindBond(BOND_INDEX, MAX_SATS, deployer, MAX_SATS / 2)).toBeErr(
-      Cl.uint(116), // INVALID_AMOUNT -- a floor here would be a trap on rolls
-    );
-  });
+    expect(nextBond()).toBe(BOND_INDEX);
 
-  it("refuses a floor above the allocation it could never reach", () => {
-    registerSignerManager();
-    initializePool();
-    setupBond();
-    // rejected on both counts: above the ceiling, and not the genesis bond
-    expect(bindBond(BOND_INDEX, MAX_SATS, deployer, MAX_SATS + 1)).toBeErr(
-      Cl.uint(116),
-    );
-  });
+    // the members sit this one out
+    expect(setNextBond(BOND_INDEX + 1).type).toBe("ok");
+    expect(nextBond()).toBe(null);
+    expect(bindNextBond()).toBeErr(Cl.uint(103)); // BOND_NOT_FOUND
 
-  it("binds with no floor, and starts on whatever has gathered", () => {
-    const { bondStart } = bootstrap();
-    expect(Number(boundBond()["min-sats"])).toBe(0);
-    expect(stakePreview()["meets-floor"]).toBe(true);
-    deposit(alice, 1);
-    advanceToBurnHeight(bondStart - 288);
-    expect(stake().type).toBe("ok");
+    // a floor of zero is no floor at all
+    expect(setNextBond(0).type).toBe("ok");
+    expect(bindNextBond().type).toBe("ok");
+    expect(Number(boundBond()["bond-index"])).toBe(BOND_INDEX);
   });
 });

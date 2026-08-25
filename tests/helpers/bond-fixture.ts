@@ -25,8 +25,9 @@ import {
 export const POX5 = "ST000000000000000000002AMW42H.pox-5";
 export const SBTC_DEPLOYER = "SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4";
 export const SBTC = `${SBTC_DEPLOYER}.sbtc-token`;
-export const MANAGER = "fastpool-signer-manager";
-export const ALT_MANAGER = "signer-manager";
+/** The manager the pool stakes through, and the one it can be moved to. */
+export const MANAGER = "fastpool-max500-signer-manager";
+export const ALT_MANAGER = "fastpool-signer-manager";
 export const POOL = "bond-staker";
 export const TREASURY = "bond-treasury";
 export const BRIDGE = "bond-bridge";
@@ -189,25 +190,29 @@ export const initializePool = (sender = deployer, manager = MANAGER) =>
     sender,
   ).result;
 
-export const bindBond = (
-  index = BOND_INDEX,
-  maxSats = MAX_SATS,
-  sender = deployer,
-  minSats = 0,
-) =>
-  simnet.callPublicFn(
-    POOL,
-    "bind-bond",
-    [Cl.uint(index), Cl.uint(maxSats), Cl.uint(minSats)],
-    sender,
-  ).result;
+/**
+ * Bind whatever the walk finds. No index, no allocation: the call takes none,
+ * and anyone may make it -- `sender` is here to prove that, not to authorize.
+ */
+export const bindNextBond = (sender = deployer) =>
+  simnet.callPublicFn(POOL, "bind-next-bond", [], sender).result;
+
+/** The floor the members put under the next bind. Operator-only. */
+export const setNextBond = (index: number, sender = deployer) =>
+  simnet.callPublicFn(POOL, "set-next-bond", [Cl.uint(index)], sender).result;
+
+/** What `bind-next-bond` would take right now, or null if there is nothing. */
+export const nextBond = (): number | null => {
+  const found = plain(readPool("find-next-bond", []));
+  return found === null ? null : Number(found);
+};
 
 /** register signer + initialize + create bond + bind, ready for deposits. */
-export function bootstrap(maxSats = MAX_SATS) {
+export function bootstrap(allowanceSats = ALLOWANCE_SATS) {
   registerSignerManager();
   expectOk(initializePool(), "initialize");
-  setupBond();
-  expectOk(bindBond(BOND_INDEX, maxSats), "bind-bond");
+  setupBond(BOND_INDEX, allowanceSats);
+  expectOk(bindNextBond(), "bind-next-bond");
   return {
     bondStart: bondStartHeight(BOND_INDEX),
     unlockHeight: Number(boundBond()["unlock-burn-height"]),

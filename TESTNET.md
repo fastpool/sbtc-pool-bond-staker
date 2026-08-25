@@ -75,24 +75,37 @@ done
 
 ## Bond 3 is the last one in reach
 
-`stake` only runs once `BIND_NOTICE` (576 burn blocks) has elapsed since
-`bind-bond`, and only inside the `STAKE_WINDOW` (288 blocks) before the bond
-starts. Those two windows have to overlap, which is what put bonds 1 and 2 out
-of reach — both started long before a bind today could clear its notice. Bond 3
+> Written for the `vault-2` deployment, which predates `bind-next-bond`. The
+> deployed contract still has `bind-bond(index, allocation, min-sats)`; the
+> source in `contracts/` no longer does. Bond 3 came and went unstaked and the
+> pool is bound to bond 4 — the sums below are kept because they are how the
+> window is worked out, not because bond 3 is still live.
+
+`stake` only runs once `BIND_NOTICE` (576 burn blocks) has elapsed since the
+bind, and only inside the `STAKE_WINDOW` (288 blocks) before the bond starts.
+Those two windows have to overlap, which is what put bonds 1 and 2 out of
+reach — both started long before a bind today could clear its notice. Bond 3
 still works:
 
 ```
 now                        7994
 bind by                    8136   <- leaves the whole stake window
-absolute last bind         8423   <- leaves a sliver of it
+absolute last bind         8423   <- leaves a sliver of it, and see below
 notice ends                bind + 576
 stake window               8712 .. 8999
 bond 3 starts              9000
 ```
 
 That is roughly 140 blocks — call it a day — to publish four contracts,
-`initialize`, seat the DAO and `bind-bond`. The publishes and the two calls are
-three confirmed batches, so start early rather than at 8100.
+`initialize`, seat the DAO and bind. The publishes and the two calls are three
+confirmed batches, so start early rather than at 8100.
+
+`bind-next-bond` will not take the "sliver" line at all. It refuses any period
+whose notice would run past the *opening* of the stake window — bind by
+`start - 864` or not at all — because a bond period begins on a reward cycle
+boundary and pox-5 refuses to register inside that cycle's prepare phase, so a
+notice ending in the last blocks before the start is a bind that can never be
+staked.
 
 Missing it is not fatal, only slow: an unbound pool is inert and costs nothing
 to leave standing, and the next grant would be a request to whoever runs
@@ -191,25 +204,26 @@ That plan is the launch. It runs three batches, each confirmed before the next:
 | 2 | `update-operator(<deployer>.esbee-dao-2, true)` — seats the DAO |
 
 The deployer takes the operator seat in batch 1 rather than the DAO, because
-`bind-bond` is deliberately not behind a vote: a bond has to be bound inside the
-window pox-5 allows, which a voting period, a delay and a quorum cannot be
-relied on to hit. Batch 2 then adds the DAO alongside it, which is what puts the
-other four operator powers — signer moves, the trusted list, who the operators
-are, and sweeps — in the members' hands. `update-operator` refuses to change the
-caller's own entry, so the deployer cannot retire itself here; doing that is a
-later call *from the DAO*, by vote. Leaving both seated is the right state for a
-testnet run, since only the keyed operator can bind.
+the DAO cannot vote until the pool has staked: voting weight is committed
+shares, and there are none before then. Batch 2 adds the DAO alongside it,
+which is what puts the operator's powers — signer moves, the trusted list, who
+the operators are, sweeps, and skipping a bond — in the members' hands.
+`update-operator` refuses to change the caller's own entry, so the deployer
+cannot retire itself here; doing that is a later call *from the DAO*, by vote.
+Leaving both seated is the right state for a testnet run.
 
 Then, as the operator:
 
 | # | call | note |
 | --- | --- | --- |
-| 1 | `bind-bond(u3, u100000000, u0)` | operator-only, and the step with a deadline. `min-sats` **must** be `u0` — the launch floor is only accepted for bond 0. `deployments/testnet-bind-bond-3.yaml` is this call ready to apply |
+| 1 | `bind-bond(u4, u100000000, u0)` | the step with a deadline. Operator-only on the deployed `vault-2`; in the current source this is `bind-next-bond()`, permissionless and with no arguments. `deployments/testnet-bind-bond-4.yaml` is this call ready to apply |
 | 2 | `deposit(<sats>)` | moves both legs; the STX is pulled in the same call |
 | 3 | `stake(ST1B38…signer-manager)` | permissionless, inside the window, once the notice has run |
 
-Check before the last step with `get-stake-preview` — it reports `meets-floor`,
-`short-ustx` and whether the pool is `stx-limited` or `allocation-limited`.
+Check before the last step with `get-stake-preview` — it reports `short-ustx`
+and whether the pool is `stx-limited` or `allocation-limited`. (The deployed
+`vault-2` also reports `meets-floor`; the launch floor is gone from the
+source.)
 Confirm afterwards with pox-5's `get-total-sbtc-staked-for-bond(u3)` — which
 already reads 19 500 sats from another staker, so compare the delta rather than
 the total.

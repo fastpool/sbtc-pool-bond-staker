@@ -60,7 +60,7 @@ const FUNDER = "SP1K1A1PMGW2ZJCNF46NWZWHG8TS1D23EGH1KNK60";
 // then cascades into every contract that calls it.
 const CLARITY = ClarityVersion.Clarity6;
 
-const MANAGER = "fastpool-signer-manager";
+const MANAGER = "fastpool-max500-signer-manager";
 const POOL = "bond-staker";
 const SIGNER_KEY =
   "010101010101010101010101010101010101010101010101010101010101010101";
@@ -103,9 +103,12 @@ const contract = (name) => {
   }
   return readFileSync(built, "utf8");
 };
+// The vendored copy is the published mainnet contract with its boot address
+// rewritten for simnet, so rewriting it back hands this simulation the bytes
+// that are actually on chain. See `scripts/build-test-managers.mjs`.
 const managerSource = () =>
   readFileSync(
-    join(root, "..", "fastpool-pox-5", "contracts", `${MANAGER}.clar`),
+    join(root, "tests", "contracts", `${MANAGER}.clar`),
     "utf8",
   ).replaceAll("ST000000000000000000002AMW42H", "SP000000000000000000002Q6VF78");
 
@@ -254,18 +257,16 @@ function launch(builder, { bond, admin, grant, poolId, managerId }) {
         function_args: [Cl.principal(managerId), Cl.principal(DEPLOYER)],
         fee: 0,
       })
-      // A launch floor is only accepted on bond 0. Anywhere else it must be
-      // zero, so the pool starts on whatever turned up.
+      // No index and no allocation: the call takes neither. It walks to the
+      // earliest period pox-5 has allowlisted this pool for, so what is being
+      // simulated here is whether the grant and the timing line up at all.
       .addContractCall({
         contract_id: poolId,
-        function_name: "bind-bond",
-        function_args: [
-          Cl.uint(bond.index),
-          Cl.uint(BOND.maxSats),
-          Cl.uint(bond.index === 0 ? Math.floor(BOND.maxSats / 2) : 0),
-        ],
+        function_name: "bind-next-bond",
+        function_args: [],
         fee: 0,
       })
+      .addEvalCode(poolId, "(find-next-bond)")
       .addEvalCode(poolId, "(get-bound-bond)")
   );
 }

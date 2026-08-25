@@ -73,9 +73,9 @@ way through `v1/Clarinet-bond-staker.toml` and
 ## Why there are stand-ins
 
 A pox-5 protocol bond can only be created by pox-5's bond admin, and on simnet
-that role belongs to an address no wallet holds. So `bind-bond`, `stake` and
-`unstake-sbtc` can never get past their pox-5 calls in a fuzz run, and without
-help the fuzzer would only ever see an unbound pool.
+that role belongs to an address no wallet holds. So `bind-next-bond`, `stake`
+and `unstake-sbtc` can never get past their pox-5 calls in a fuzz run, and
+without help the fuzzer would only ever see an unbound pool.
 
 `harness-bind`, `harness-lock` and `harness-release` write exactly the state
 those three write and move the sBTC exactly as pox-5 would — out of

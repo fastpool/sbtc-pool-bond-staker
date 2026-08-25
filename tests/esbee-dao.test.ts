@@ -4,13 +4,14 @@ import {
   advanceToBurnHeight,
   ALT_MANAGER,
   bondStartHeight,
+  bindNextBond,
   bootstrap,
   BOND_INDEX,
+  boundBond,
   deployer,
   deposit,
   epoch,
   managerPrincipal,
-  MAX_SATS,
   NEXT_BOND_INDEX,
   num,
   plain,
@@ -167,12 +168,7 @@ describe("esbee-dao: nothing passes quietly", () => {
     passProposal(0);
     // the membership that voted is not the membership that would live with it
     setupBond(NEXT_BOND_INDEX);
-    simnet.callPublicFn(
-      POOL,
-      "bind-bond",
-      [Cl.uint(NEXT_BOND_INDEX), Cl.uint(MAX_SATS), Cl.uint(0)],
-      deployer,
-    );
+    simnet.callPublicFn(POOL, "bind-next-bond", [], deployer);
     advanceToBurnHeight(bondStartHeight(NEXT_BOND_INDEX) - 288);
     expect(stake().type).toBe("ok");
 
@@ -280,5 +276,42 @@ describe("esbee-dao: exercising the operator's powers", () => {
     expect(callDao("execute-operator-change", [Cl.uint(0)], carol)).toBeErr(
       Cl.uint(100), // bond-staker UNAUTHORIZED
     );
+  });
+});
+
+describe("esbee-dao: skipping a bond", () => {
+  beforeEach(() => {
+    daoInCharge();
+  });
+
+  it("puts a floor under the next bind, and nothing else", () => {
+    // The pool is live in bond 2, so the walk would take 2 + 6 next. The
+    // members decide to sit that one out.
+    callDao("propose-next-bond", [Cl.uint(NEXT_BOND_INDEX + 1)], alice);
+    expect(proposal(0).kind).toBe("next-bond");
+    expect(Number(proposal(0).index)).toBe(NEXT_BOND_INDEX + 1);
+
+    passProposal(0);
+    expect(callDao("execute-next-bond", [Cl.uint(0)], carol).type).toBe("ok");
+    expect(Number(poolConfig()["min-bond-index"])).toBe(NEXT_BOND_INDEX + 1);
+
+    // and the bond they skipped is now unbindable, by anyone
+    setupBond(NEXT_BOND_INDEX);
+    expect(bindNextBond(carol)).toBeErr(Cl.uint(103)); // BOND_NOT_FOUND
+  });
+
+  it("spends a mandate on the power it was raised for and no other", () => {
+    callDao("propose-next-bond", [Cl.uint(NEXT_BOND_INDEX + 1)], alice);
+    passProposal(0);
+    expect(callDao("execute-sweep", [Cl.uint(0)], carol)).toBeErr(
+      Cl.uint(412), // WRONG_KIND
+    );
+  });
+
+  it("binds without a vote when the members have said nothing", () => {
+    setupBond(NEXT_BOND_INDEX);
+    // carol is not a member, not an operator, and does not need to be
+    expect(bindNextBond(carol).type).toBe("ok");
+    expect(Number(boundBond()["bond-index"])).toBe(NEXT_BOND_INDEX);
   });
 });

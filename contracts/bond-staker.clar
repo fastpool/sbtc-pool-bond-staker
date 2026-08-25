@@ -167,9 +167,13 @@
 ;; Lifecycle
 ;;
 ;;   initialize    deployer, once: the signer manager and the operator.
-;;   bind-bond     operator, once per bond, after the bond admin has run
-;;                 `setup-bond` and allowlisted this contract. Bond parameters
-;;                 are read from pox-5 rather than supplied. Opens deposits.
+;;   set-next-bond operator: a floor on which bond period comes next, which
+;;                 is how the members skip one. Optional.
+;;   bind-next-bond
+;;                 permissionless, once the bond admin has run `setup-bond`
+;;                 and allowlisted this contract. Takes no arguments: index,
+;;                 allocation and every term are read from pox-5. Opens
+;;                 deposits.
 ;;   deposit       anyone, while a bond is bound and has not started.
 ;;   deposit-stx   anyone, to raise the STX behind the pool's sats.
 ;;   withdraw      anyone, for their own queued deposit, until it is staked.
@@ -189,14 +193,14 @@
 ;;
 ;; Nothing about a specific bond is baked into this source: a bond's rate,
 ;; ratio, start height, unlock height and this contract's sats allowance are
-;; all read from pox-5 at `bind-bond`. The genesis bond starts at bitcoin
+;; all read from pox-5 at `bind-next-bond`. The genesis bond starts at bitcoin
 ;; block 966,350 in reward cycle 143, with a deliberately limited capacity
 ;; handed out to pre-approved participants:
 ;; https://www.stacks.co/blog/the-genesis-bond-starts-at-bitcoin-block-966-350
 ;;
 ;; That allowlist is the one precondition this contract cannot arrange for
 ;; itself: the bond admin must have called `setup-bond` naming this contract
-;; before `bind-bond` will succeed -- for the first bond and for every roll.
+;; before `bind-next-bond` will succeed -- first bond and every roll alike.
 
 (use-trait signer-manager-trait 'ST000000000000000000002AMW42H.pox-5.signer-manager-trait)
 
@@ -229,7 +233,9 @@
 (define-constant ERR_SIGNER_NOT_TRUSTED (err u126))
 (define-constant ERR_ALREADY_TRUSTED (err u127))
 (define-constant ERR_NOT_A_CONTRACT (err u128))
-(define-constant ERR_BELOW_LAUNCH_FLOOR (err u129))
+;; u129 was ERR_BELOW_LAUNCH_FLOOR, from when a bind could carry a launch
+;; floor. Left unused rather than reassigned: an error number is part of what
+;; a caller reads back, and reusing one changes the meaning of an old code.
 
 ;;; Protocol constants -- these mirror pox-5 and are not deployment knobs
 
@@ -251,8 +257,27 @@
 ;; (900).
 (define-constant BIND_NOTICE u576)
 
-;; The one bond a launch floor may be set on: pox-5's first bond period.
-(define-constant GENESIS_BOND_INDEX u0)
+;; How many bond periods ahead `bind-next-bond` looks for one this pool can
+;; take. pox-5 opens a period every 2 cycles, so twelve of them is about two
+;; years -- further out than a bond admin has ever set up, and short enough
+;; that the search stays a handful of map reads.
+(define-constant BOND_SEARCH (list u0 u1 u2 u3 u4 u5 u6 u7 u8 u9 u10 u11))
+
+;; How far past `earliest-reachable-bond` `set-next-bond` may put its floor. A
+;; hundred bond periods is some forty years, so this bounds nothing anyone
+;; would ask for.
+;;
+;; What it bounds is a fat-fingered uint. pox-5 works a period's start height
+;; out as `first + index * spacing`, which overflows and aborts for an absurd
+;; index -- and `find-next-bond` is a read-only the front end calls, so a floor
+;; nobody could reach would take the page down with it until another vote
+;; cleared it.
+;;
+;; It is measured against the protocol's floor and not the pool's on purpose.
+;; Against the pool's, a floor would be part of what bounds the next floor, so
+;; a hundred at a time could be walked out as far as anyone cared to vote; the
+;; cap would be on the step and not on the distance.
+(define-constant MAX_SKIP u100)
 
 ;; How long before the bond starts `stake` may be called, in burn blocks.
 ;; ~2 days: long enough to get the transaction mined, short enough that
@@ -321,14 +346,22 @@
 (define-data-var bound-at-height uint u0)
 (define-data-var pending-bond-index uint u0)
 (define-data-var pending-max-sats uint u0)
-;; The least the pool will commit to this bond. `stake` refuses below it, so a
-;; pool that nobody showed up for never starts.
-(define-data-var pending-min-sats uint u0)
 ;; `stx-value-ratio` is uSTX per 100 sats, `min-ustx-ratio` is in bips.
 (define-data-var pending-stx-value-ratio uint u0)
 (define-data-var pending-min-ustx-ratio uint u0)
 (define-data-var pending-start-height uint u0)
 (define-data-var pending-unlock-height uint u0)
+
+;; The earliest bond period `bind-next-bond` may take, as set by the members
+;; through `set-next-bond`.
+;;
+;; A floor rather than an exact index, and deliberately so. An exact pin on a
+;; period pox-5 never sets up would strand the pool until another vote cleared
+;; it -- which is the liveness problem this whole call exists to remove. As a
+;; floor it still says both of the things worth saying: skip bond N by setting
+;; N + 1, aim at bond M by setting M. If the bond admin's allowlist disagrees,
+;; the walk carries on from there rather than stopping.
+(define-data-var min-bond-index uint u0)
 
 ;;; Epochs
 
@@ -470,6 +503,8 @@
     signer-manager: (var-get signer-manager),
     epoch-count: (var-get epoch-count),
     finished: (var-get finished),
+    ;; The floor the members have put under the next bind, if any.
+    min-bond-index: (var-get min-bond-index),
   }
 )
 
@@ -510,7 +545,6 @@
     bound: (var-get bond-bound),
     bond-index: (var-get pending-bond-index),
     max-sats: (var-get pending-max-sats),
-    min-sats: (var-get pending-min-sats),
     stx-value-ratio: (var-get pending-stx-value-ratio),
     min-ustx-ratio: (var-get pending-min-ustx-ratio),
     start-height: (var-get pending-start-height),
@@ -595,9 +629,6 @@
       scaled: (< sats eligible),
       stx-limited: (< affordable fits-allocation),
       allocation-limited: (< allocation eligible),
-      ;; Enough of a pool turned up to be worth starting.
-      min-sats: (var-get pending-min-sats),
-      meets-floor: (>= sats (var-get pending-min-sats)),
     }
   )
 )
@@ -668,18 +699,21 @@
   )
 )
 
-;; First burn height at which `stake` may be called for the bound bond.
-(define-read-only (stake-window-start)
-  (let ((start (var-get pending-start-height)))
-    (if (> start STAKE_WINDOW)
-      (- start STAKE_WINDOW)
-      u0
-    )
+;; When the stake window opens for a bond starting at `start`.
+(define-read-only (stake-window-start-of (start uint))
+  (if (> start STAKE_WINDOW)
+    (- start STAKE_WINDOW)
+    u0
   )
 )
 
+;; First burn height at which `stake` may be called for the bound bond.
+(define-read-only (stake-window-start)
+  (stake-window-start-of (var-get pending-start-height))
+)
+
 ;; False once the bound bond has started without the pool: it can no longer be
-;; staked, and `bind-bond` may replace it.
+;; staked, and `bind-next-bond` may replace it.
 (define-read-only (can-still-stake)
   (and
     (var-get bond-bound)
@@ -916,37 +950,196 @@
   )
 )
 
-;; Bind the pool to the bond it will stake into next, opening deposits.
+;; Whether this pool could bind `index` right now.
 ;;
-;; The bond must already exist and have this contract on its allowlist. Every
-;; parameter but the allocation and the floor is read from pox-5, so none of
-;; them can be wrong.
+;; Three questions, and all three are pox-5's to answer: has the bond admin set
+;; the period up, is this contract on its allowlist for anything at all, and is
+;; the start still far enough out that the whole notice runs before the stake
+;; window opens.
 ;;
-;; `min-sats` is what makes a launch the members' decision rather than the
-;; operator's. `stake` is permissionless and always was, so there is nothing to
-;; authorize -- the question is only whether enough of a pool turned up to be
-;; worth starting, and that is a number, not a vote. Set it to half the
-;; allocation and the pool starts only if it half fills; set it to zero and it
-;; starts on whatever it has.
-;;
-;; It is only accepted for the genesis bond, bond 0. Everywhere else it must be
-;; zero: a floor on a roll would risk the pool missing it and winding down at
-;; the end of its term, which is a worse outcome than rolling light. Since it
-;; can only be non-zero there, the check in `stake` is inert for every other
-;; bond without needing to know which one it is looking at. Rolling on from a live bond means an index at least
-;; NEXT_BOND_OFFSET ahead -- anything nearer overlaps the running term, and
-;; pox-5 would reject it.
-;;
-;; A bond that has come and gone without being staked can be replaced, so a
-;; missed window costs the pool one bond period rather than its whole future.
-(define-public (bind-bond
-    (index uint)
-    (allocation-sats uint)
-    (min-sats uint)
+;; That last one is what stops a bind nobody could ever stake, and it is the
+;; *window* it is measured against rather than the start. Leaving the notice to
+;; expire somewhere inside the window looks like it would do -- `stake` only
+;; wants the notice over and the bond not yet started -- but a bond period
+;; begins on a reward cycle boundary, and pox-5 refuses to register inside that
+;; cycle's prepare phase. A notice ending in those last blocks is a bind that
+;; holds the slot and can never be used. BIND_NOTICE + STAKE_WINDOW clears the
+;; prepare phase with the whole window to spare.
+(define-read-only (bindable-bond (index uint))
+  (let (
+      (start (contract-call? 'ST000000000000000000002AMW42H.pox-5
+        bond-period-to-burn-height index
+      ))
+      (opens (stake-window-start-of start))
+    )
+    (and
+      (is-some (contract-call? 'ST000000000000000000002AMW42H.pox-5 get-protocol-bond
+        index
+      ))
+      (> (default-to u0
+        (contract-call? 'ST000000000000000000002AMW42H.pox-5 get-bond-allowance
+          index current-contract
+        )) u0
+      )
+      (<= (+ burn-block-height BIND_NOTICE) opens)
+    )
   )
+)
+
+;; The earliest period worth looking at, before the allowlist is consulted.
+;;
+;; The earliest period the *protocol* leaves open, before the members have
+;; their say.
+;;
+;; Two floors, and the higher wins. The clock: a period whose stake window
+;; opens sooner than BIND_NOTICE from now can never be staked, and since
+;; periods are evenly spaced the first one that clears it is arithmetic rather
+;; than a walk. The roll: a bond nearer than NEXT_BOND_OFFSET overlaps the
+;; running term and pox-5 would reject it.
+;;
+;; Split out from `earliest-bindable-bond` because `set-next-bond` has to
+;; measure its floor against something the floor itself is not part of. Bound
+;; against the full answer, each call could stand on the last one's shoulders
+;; and MAX_SKIP would cap a single step rather than the distance.
+(define-read-only (earliest-reachable-bond)
+  (let (
+      (first (contract-call? 'ST000000000000000000002AMW42H.pox-5
+        bond-period-to-burn-height u0
+      ))
+      (second (contract-call? 'ST000000000000000000002AMW42H.pox-5
+        bond-period-to-burn-height u1
+      ))
+      ;; pox-5 spaces periods by a fixed number of cycles, so this is a
+      ;; constant. Guarded anyway: a zero would be a division, not a bug here.
+      (spacing (if (> second first)
+        (- second first)
+        u1
+      ))
+      ;; The first start height whose stake window opens late enough for the
+      ;; notice to run out first -- the same rule `bindable-bond` applies, as
+      ;; an index rather than a test.
+      (deadline (+ burn-block-height BIND_NOTICE STAKE_WINDOW))
+      (by-clock (if (<= deadline first)
+        u0
+        (ceil-div (- deadline first) spacing)
+      ))
+      (by-roll (match (get-live-epoch)
+        live (+ (get bond-index live) NEXT_BOND_OFFSET)
+        u0
+      ))
+    )
+    (if (> by-clock by-roll)
+      by-clock
+      by-roll
+    )
+  )
+)
+
+;; Where the walk starts: the earliest period the protocol leaves open, or the
+;; members' floor, whichever is higher.
+(define-read-only (earliest-bindable-bond)
+  (let (
+      (reachable (earliest-reachable-bond))
+      (by-members (var-get min-bond-index))
+    )
+    (if (> reachable by-members)
+      reachable
+      by-members
+    )
+  )
+)
+
+(define-private (check-bond-candidate
+    (offset uint)
+    (found {
+      from: uint,
+      index: (optional uint),
+    })
+  )
+  (if (is-some (get index found))
+    found
+    (let ((index (+ (get from found) offset)))
+      (if (bindable-bond index)
+        (merge found { index: (some index) })
+        found
+      )
+    )
+  )
+)
+
+;; The bond `bind-next-bond` would take: the first period from
+;; `earliest-bindable-bond` on that this pool can actually bind.
+;;
+;; `none` is the ordinary answer between a bond admin's `setup-bond` calls,
+;; not an error -- there is simply nothing to bind yet.
+(define-read-only (find-next-bond)
+  (get index
+    (fold check-bond-candidate BOND_SEARCH {
+      from: (earliest-bindable-bond),
+      index: none,
+    })
+  )
+)
+
+;; The bond period the members want next: `bind-next-bond` will not take
+;; anything below it.
+;;
+;; This is the whole of the discretion left in the roll. Which bond the pool
+;; goes into is otherwise arithmetic -- the earliest one pox-5 has set up with
+;; this contract allowlisted, far enough out that the notice still fits -- and
+;; arithmetic needs no permission. What a vote is good for is the judgement
+;; the arithmetic cannot make: sit this one out.
+;;
+;; Skipping bond N is `set-next-bond(N + 1)`. Aiming at bond M is
+;; `set-next-bond(M)`. Setting u0 puts the floor back where it started.
+(define-public (set-next-bond (index uint))
   (begin
     (try! (authorize-operator))
+    ;; Measured against the protocol's floor rather than the pool's, so the
+    ;; distance is capped rather than each step: a floor cannot be used to
+    ;; lever the next one further out.
+    (asserts! (<= index (+ (earliest-reachable-bond) MAX_SKIP))
+      ERR_INVALID_BOND_INDEX
+    )
+    (var-set min-bond-index index)
+    (print {
+      topic: "set-next-bond",
+      index: index,
+    })
+    (ok index)
+  )
+)
+
+;; Bind the pool to the bond it will stake into next, opening deposits.
+;;
+;; Permissionless, and takes no arguments, which are the same fact said twice:
+;; there is nothing here for a caller to choose. The index is the earliest one
+;; `find-next-bond` allows, the allocation is the whole of what pox-5 lets
+;; this pool bond, and every term -- rate, ratio, start, unlock -- is read off
+;; the bond itself. Two callers of this function write the same state, so
+;; there is nothing to authorize and nothing to grief.
+;;
+;; That matters because a bind is sticky: it cannot be replaced until the bond
+;; it named has started (`can-still-stake`), so a bind nobody could correct is
+;; a bond period gone. Under a key it was worse than sticky -- it was a
+;; liveness dependency, and a missed window cost the pool a period for no
+;; better reason than that nobody was watching.
+;;
+;; The one judgement left is the members': `set-next-bond` puts a floor under
+;; the index, which is how a bond gets deliberately skipped.
+;;
+;; The bond admin's `setup-bond` is still the precondition this contract
+;; cannot arrange for itself. Until this pool is on a period's allowlist there
+;; is nothing here to bind, for the first bond and for every roll.
+(define-public (bind-next-bond)
+  (begin
+    (asserts! (var-get initialized) ERR_NOT_INITIALIZED)
+    (asserts! (not (var-get finished)) ERR_ALREADY_UNSTAKED)
+    ;; A bond that has come and gone unstaked can be replaced, so a missed
+    ;; window costs the pool one period rather than its whole future.
+    (asserts! (not (can-still-stake)) ERR_BOND_ALREADY_BOUND)
     (let (
+        (index (unwrap! (find-next-bond) ERR_BOND_NOT_FOUND))
         (bond (unwrap!
           (contract-call? 'ST000000000000000000002AMW42H.pox-5 get-protocol-bond
             index
@@ -969,21 +1162,14 @@
           reward-cycle-to-burn-height (+ start-cycle BOND_LENGTH_CYCLES)
         ))
       )
-      (asserts! (var-get initialized) ERR_NOT_INITIALIZED)
-      (asserts! (not (var-get finished)) ERR_ALREADY_UNSTAKED)
-      (asserts! (not (can-still-stake)) ERR_BOND_ALREADY_BOUND)
-      (asserts! (> allocation-sats u0) ERR_INVALID_AMOUNT)
-      ;; Never advertise more room than pox-5 will let the pool bond.
-      (asserts! (<= allocation-sats allowance) ERR_ALLOCATION_EXCEEDED)
-      ;; A floor above the ceiling would bind a bond that could never be staked.
-      (asserts! (<= min-sats allocation-sats) ERR_INVALID_AMOUNT)
-      ;; ...and a floor anywhere but the genesis bond is refused outright
-      ;; rather than quietly ignored.
-      (asserts! (or (is-eq index GENESIS_BOND_INDEX) (is-eq min-sats u0))
-        ERR_INVALID_AMOUNT
+      ;; Both hold by construction -- `find-next-bond` starts no lower than
+      ;; the roll offset and takes nothing whose notice cannot run out in
+      ;; time. Asserted anyway, because they are the two properties that make
+      ;; the call safe to leave open, and an assert is where a reader looks
+      ;; for them.
+      (asserts! (<= (+ burn-block-height BIND_NOTICE) (stake-window-start-of start-height))
+        ERR_TOO_LATE
       )
-      ;; Deposits would be pointless: the bond can no longer be joined.
-      (asserts! (< burn-block-height start-height) ERR_TOO_LATE)
       (asserts!
         (match (get-live-epoch)
           live (>= index (+ (get bond-index live) NEXT_BOND_OFFSET))
@@ -993,8 +1179,10 @@
       )
 
       (var-set pending-bond-index index)
-      (var-set pending-max-sats allocation-sats)
-      (var-set pending-min-sats min-sats)
+      ;; The whole allowance. There is no smaller number a caller could be
+      ;; trusted to pick, and the pool never has to be capped below what pox-5
+      ;; already caps it at: `get-stake-preview` scales to whatever turned up.
+      (var-set pending-max-sats allowance)
       (var-set pending-stx-value-ratio (get stx-value-ratio bond))
       (var-set pending-min-ustx-ratio (get min-ustx-ratio bond))
       (var-set pending-start-height start-height)
@@ -1002,7 +1190,7 @@
       (var-set bound-at-height burn-block-height)
       (var-set bond-bound true)
 
-      (print (merge { topic: "bind-bond" } (get-bound-bond)))
+      (print (merge { topic: "bind-next-bond" } (get-bound-bond)))
       (ok (get-bound-bond))
     )
   )
@@ -1133,9 +1321,6 @@
     (asserts! (> eligible u0) ERR_NOTHING_DEPOSITED)
     ;; Nothing at all fits: the pool holds no usable STX for this bond.
     (asserts! (> sats u0) ERR_INSUFFICIENT_STX)
-    ;; Too few turned up. Nothing is committed, deposits stay withdrawable, and
-    ;; the bond simply passes the pool by.
-    (asserts! (get meets-floor preview) ERR_BELOW_LAUNCH_FLOOR)
     (asserts! (>= burn-block-height (stake-window-start)) ERR_TOO_EARLY)
     (asserts! (< burn-block-height (var-get pending-start-height)) ERR_TOO_LATE)
     ;; The members' notice on this bond has to have run out too, so nobody is
@@ -2378,7 +2563,7 @@
 )
 
 ;;; Stand-ins for the pox-5 calls
-;; `bind-bond` without the pox-5 lookups. Arguments are folded into sane
+;; `bind-next-bond` without the pox-5 lookups. Arguments are folded into sane
 ;; ranges so a random call produces a usable bond instead of bouncing. The
 ;; pricing is fixed at the first bind: letting it drift between bonds would
 ;; mostly produce rolls that bounce on the STX floor, which the unit tests
@@ -2392,11 +2577,11 @@
   )
   ;; Far enough out that BIND_NOTICE (576) runs out before the stake window
   ;; opens at start - 288. Bound any nearer and the notice outlasts the bond's
-  ;; start, which is exactly the trap `bind-bond` warns about -- and which had
+  ;; start, which is exactly the trap `bind-next-bond` warns about -- and had
   ;; been silently stopping this harness from ever opening an epoch.
   (let ((start (+ burn-block-height u900 (mod blocks-ahead u400))))
     (asserts! (not (var-get finished)) ERR_ALREADY_UNSTAKED)
-    ;; Same rule as `bind-bond`: a bond whose window has closed unstaked can be
+    ;; Same rule as `bind-next-bond`: a bond whose window closed unstaked can be
     ;; replaced. rv jumps hundreds of burn blocks between rounds, so without
     ;; this the first missed window would end the run.
     (asserts! (not (can-still-stake)) ERR_BOND_ALREADY_BOUND)
@@ -2417,21 +2602,9 @@
     )
     (var-set pending-bond-index (* (var-get epoch-count) NEXT_BOND_OFFSET))
     (var-set pending-max-sats (+ u1000000 (mod allocation-sats u100000000000)))
-    ;; A launch floor on roughly one bind in four. `bind-bond` only accepts one
-    ;; for the genesis bond, which began at burn height 0 and so can never be
-    ;; set up in simnet -- this is the only place the check in `stake` gets
-    ;; exercised at all. Most binds are left floor-free on purpose: a floor on
-    ;; every one of them blocks nearly every lock, and an unstaked pool leaves
-    ;; the epoch and reward machinery untested, which is worth far more than
-    ;; this one comparison.
-    (var-set pending-min-sats
-      (if (is-eq (mod allocation-sats u4) u0)
-        (mod allocation-sats u2000)
-        u0
-      ))
     (var-set pending-start-height start)
     (var-set pending-unlock-height (+ start u3000))
-    ;; The notice runs from here, same as `bind-bond`.
+    ;; The notice runs from here, same as `bind-next-bond`.
     (var-set bound-at-height burn-block-height)
     (var-set bond-bound true)
     (ok true)
@@ -2455,7 +2628,6 @@
     (asserts! (not (var-get finished)) ERR_ALREADY_UNSTAKED)
     (asserts! (> eligible u0) ERR_NOTHING_DEPOSITED)
     (asserts! (> sats u0) ERR_INSUFFICIENT_STX)
-    (asserts! (get meets-floor preview) ERR_BELOW_LAUNCH_FLOOR)
     (asserts! (>= burn-block-height (stake-window-start)) ERR_TOO_EARLY)
     (asserts! (< burn-block-height (var-get pending-start-height)) ERR_TOO_LATE)
     (asserts! (>= burn-block-height (+ (var-get bound-at-height) BIND_NOTICE))

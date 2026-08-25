@@ -19,15 +19,26 @@ check_checker = { trusted_sender = false, trusted_caller = false, callee_filter 
 
 [contracts]
 
-# Signer managers, for tests only: a bond participant has to stake through a
-# registered pox-5 signer. Sourced from the sibling fastpool-pox-5 project.
-[contracts.fastpool-signer-manager]
-path = "../fastpool-pox-5/contracts/fastpool-signer-manager.clar"
+# Signer managers, for tests only: pox-5 will not register a staker for a bond
+# except through a registered signer manager. Two of them, because the pool
+# vets managers by code hash and can be moved between them, so the tests need a
+# second that is a different implementation rather than a second copy.
+#
+# Both are vendored under `tests/contracts/`, which is what makes `pnpm test`
+# depend on nothing but this checkout -- see `scripts/build-test-managers.mjs`
+# for where each came from and how to refresh it.
+#
+# The one the pool stakes through is the manager it will stake through on
+# mainnet: the published `fastpool-max500-signer-manager`, boot address
+# rewritten for simnet.
+[contracts.fastpool-max500-signer-manager]
+path = "tests/contracts/fastpool-max500-signer-manager.clar"
 clarity_version = 6
 epoch = "4.0"
 
-[contracts.signer-manager]
-path = "../fastpool-pox-5/contracts/signer-manager.clar"
+# ...and v1 is the alternate to move to.
+[contracts.fastpool-signer-manager]
+path = "tests/contracts/fastpool-signer-manager.clar"
 clarity_version = 6
 epoch = "4.0"
 
