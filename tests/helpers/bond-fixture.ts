@@ -29,6 +29,32 @@ const hash160 = (hex: string) => {
   return createHash("ripemd160").update(sha).digest("hex");
 };
 
+/**
+ * The 65-byte form of a compressed key: `0x04 || X || Y`, with Y recovered
+ * from the curve. Done here with plain bigints rather than a library, so the
+ * contract's `secp256k1-decompress?` is being checked against arithmetic and
+ * not against another copy of itself.
+ */
+const decompressPublicKey = (compressed: string) => {
+  const P = 2n ** 256n - 2n ** 32n - 977n;
+  const x = BigInt(`0x${compressed.slice(2)}`);
+  // y² = x³ + 7, and √ is a³ for p ≡ 3 mod 4 with a = (p + 1) / 4
+  const ySquared = (x ** 3n + 7n) % P;
+  let y = 1n;
+  for (let e = (P + 1n) / 4n, base = ySquared; e > 0n; e >>= 1n) {
+    if (e & 1n) y = (y * base) % P;
+    base = (base * base) % P;
+  }
+  // the prefix says which root: 02 for even Y, 03 for odd
+  if ((y & 1n) !== BigInt(compressed.slice(0, 2) === "03" ? 1 : 0)) y = P - y;
+  return `04${x.toString(16).padStart(64, "0")}${y.toString(16).padStart(64, "0")}`;
+};
+
+/** The two helpers above, for tests that need to build an address by hand. */
+export const hash160Of = hash160;
+export const uncompressedKey = (privateKey: string) =>
+  decompressPublicKey(privateKeyToPublic(privateKey));
+
 export const POX5 = "ST000000000000000000002AMW42H.pox-5";
 export const SBTC_DEPLOYER = "SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4";
 export const SBTC = `${SBTC_DEPLOYER}.sbtc-token`;
@@ -437,14 +463,35 @@ export const revealBtcAddress = (
   ).result;
 
 /**
- * The fast lane: a p2wpkh (or p2pkh) address the member can sign for.
+ * The fast lane: an address the member can sign for.
  *
- * `hash160` of the compressed public key *is* the address, so the key decides
- * what address these helpers are talking about rather than the other way
- * round.
+ * The address is a recipe over the public key, so the key decides what address
+ * these helpers are talking about rather than the other way round. One recipe
+ * per shape, computed here independently of the contract so the test is
+ * checking the contract rather than agreeing with it.
+ *
+ *   00  p2pkh        hash160 of the key
+ *   02  p2sh-p2wpkh  hash160 of `0x0014 || hash160(key)`, the key's own
+ *                    witness program used as a redeem script
+ *   04  p2wpkh       hash160 of the key
+ *
+ * `uncompressed` is for the legacy case only: an old p2pkh address may hash
+ * the 65-byte encoding of the same key, which is a different address.
  */
-export const btcKeyAddress = (privateKey: string, version = "04") =>
-  btcAddress(hash160(privateKeyToPublic(privateKey)), version);
+export const btcKeyAddress = (
+  privateKey: string,
+  version = "04",
+  { uncompressed = false }: { uncompressed?: boolean } = {},
+) => {
+  const key = uncompressed
+    ? decompressPublicKey(privateKeyToPublic(privateKey))
+    : privateKeyToPublic(privateKey);
+  const keyhash = hash160(key);
+  return btcAddress(
+    version === "02" ? hash160(`0014${keyhash}`) : keyhash,
+    version,
+  );
+};
 
 /** Sign the exact message the contract will rebuild for `member`. */
 export const signAddressClaim = (member: string, privateKey: string) => {

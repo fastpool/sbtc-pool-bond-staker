@@ -198,16 +198,29 @@
 ;; nobody else can produce the signature. No commit, no delay, no window for an
 ;; onlooker to squat in -- one call.
 ;;
-;; It only covers the two shapes whose `hashbytes` is the hash of a public key,
-;; p2pkh and p2wpkh. p2sh and p2wsh hash a *script*, and p2tr holds a key that
-;; has been tweaked by one; none of the three can be checked against a bare
-;; pubkey, and Clarity has neither the script interpreter nor the curve
-;; arithmetic to do better. Those keep the commit and the reveal, which is why
-;; both paths stay.
+;; It covers every shape whose `hashbytes` can be rebuilt from a public key and
+;; nothing else, which is three of the seven:
 ;;
-;; The key has to be compressed, which is what `secp256k1-verify` takes. A
-;; legacy p2pkh over an uncompressed key hashes to a different address and
-;; cannot come this way.
+;;   p2pkh         hash160 of the key, in either encoding
+;;   p2sh-p2wpkh   hash160 of the key's own witness program, which is itself
+;;                 hash160 of the key -- a hash of a hash, and no more
+;;   p2wpkh        hash160 of the key
+;;
+;; The other four cannot be. Plain p2sh and p2sh-p2wsh hash a script this
+;; contract never sees; p2wsh the same; p2tr holds a key tweaked by one, and
+;; Clarity has no curve arithmetic to undo the tweak. They keep the commit and
+;; the reveal, which is why both paths stay.
+;;
+;; p2tr is the near miss. A key-path output key is a real point, so an ECDSA
+;; signature over it would verify -- but a wallet signing a taproot message
+;; produces Schnorr, and there is no `schnorr-verify` to check it with.
+;;
+;; A legacy p2pkh may hash the *uncompressed* key, which is a different 65
+;; bytes and so a different address. `secp256k1-decompress?` turns the one the
+;; caller hands over into the other, so an old key reaches its old address
+;; without the caller having to say which encoding it was made with. Segwit
+;; allows only the compressed form, so the question does not arise for the
+;; other two.
 
 ;; Lowercase hex, one byte per digit.
 (define-constant HEX_DIGITS 0x30313233343536373839616263646566)
@@ -616,8 +629,55 @@
   hashbytes: (buff 32),
 }))
   (and
-    (or (is-eq (get version address) 0x00) (is-eq (get version address) 0x04))
+    (or
+      ;; p2pkh
+      (is-eq (get version address) 0x00)
+      ;; p2sh-p2wpkh
+      (is-eq (get version address) 0x02)
+      ;; p2wpkh
+      (is-eq (get version address) 0x04)
+    )
     (is-eq (len (get hashbytes address)) u20)
+  )
+)
+
+;; Whether `public-key` is the key this address was made from.
+;;
+;; Every shape here is `hashbytes` = some fixed recipe over the key, so the
+;; check is to run the recipe and compare. Which recipe is the whole of what
+;; the version byte means.
+;;
+;; Answers false rather than erroring for a shape it cannot rebuild, so the
+;; caller gets `is-provable-address`'s error for that and this one's for a key
+;; that simply is not the address's.
+(define-private (address-matches-key
+    (address {
+      version: (buff 1),
+      hashbytes: (buff 32),
+    })
+    (public-key (buff 33))
+  )
+  (let (
+      (version (get version address))
+      (hash (get hashbytes address))
+      (keyhash (hash160 public-key))
+    )
+    (if (is-eq version 0x00)
+      ;; Either encoding: a legacy address may have been made from the
+      ;; uncompressed key, which is a different 65 bytes and a different hash.
+      (or
+        (is-eq hash keyhash)
+        (is-eq hash (hash160 (unwrap! (secp256k1-decompress? public-key) false)))
+      )
+      (if (is-eq version 0x02)
+        ;; The redeem script is the key's own p2wpkh witness program, so the
+        ;; address is a hash of a hash and needs nothing this contract does not
+        ;; already have.
+        (is-eq hash (hash160 (concat 0x0014 keyhash)))
+        ;; p2wpkh, and compressed only -- segwit allows nothing else.
+        (and (is-eq version 0x04) (is-eq hash keyhash))
+      )
+    )
   )
 )
 
@@ -890,9 +950,9 @@
     )
     (asserts! (> sats u0) ERR_INVALID_AMOUNT)
     (asserts! (is-provable-address address) ERR_UNPROVABLE_ADDRESS)
-    ;; The key is the address: hash it and the two have to agree before its
-    ;; signature means anything about this address at all.
-    (asserts! (is-eq (hash160 public-key) (get hashbytes address)) ERR_WRONG_KEY)
+    ;; The key is the address: rebuild the address from it and the two have to
+    ;; agree before its signature means anything about this address at all.
+    (asserts! (address-matches-key address public-key) ERR_WRONG_KEY)
     (asserts!
       (secp256k1-verify (get-address-claim-digest member) signature public-key)
       ERR_BAD_SIGNATURE

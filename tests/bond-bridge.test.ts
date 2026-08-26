@@ -55,8 +55,11 @@ import {
   unstakeSbtc,
   btcKeyAddress,
   claimBtcAddress,
+  hash160Of,
   signAddressClaim,
+  uncompressedKey,
 } from "./helpers/bond-fixture";
+import { privateKeyToPublic } from "@stacks/transactions";
 import { buildTx, fundedDeposit, scriptFor, txidOf } from "./helpers/btc-tx";
 import { parseTx, txidOf as txidOfAsync } from "../lib/btc-tx.js";
 
@@ -294,9 +297,9 @@ describe("bond-bridge: claiming an address by signature", () => {
 
   it("refuses an address whose key cannot be checked", () => {
     bootstrap();
-    // p2sh, p2wsh and p2tr hash a script or a tweaked key, so a bare public
-    // key says nothing about them. They keep the commit and the reveal.
-    for (const version of ["01", "02", "03"]) {
+    // plain p2sh and p2sh-p2wsh hash a script this contract never sees, so a
+    // bare public key says nothing about them. They keep commit and reveal.
+    for (const version of ["01", "03"]) {
       expect(
         claimBtcAddress(
           alice,
@@ -319,6 +322,66 @@ describe("bond-bridge: claiming an address by signature", () => {
 
     // and they are different addresses, so the segwit one is still free
     expect(claimBtcAddress(alice, ALICE_KEY, ALICE_SATS).type).toBe("ok");
+  });
+
+  it("works for p2sh-wrapped segwit, whose redeem script is the key", () => {
+    bootstrap();
+    // version 02 hashes `0x0014 || hash160(key)` -- the key's own witness
+    // program, used as a redeem script. Two hashes and no script this
+    // contract never saw, so it is as provable as a bare p2wpkh.
+    const wrapped = btcKeyAddress(ALICE_KEY, "02");
+    expect(claimBtcAddress(alice, ALICE_KEY, ALICE_SATS, wrapped).type).toBe(
+      "ok",
+    );
+    expect((btcAnnouncement(wrapped) as any).member).toBe(alice);
+  });
+
+  it("will not take a p2sh address for the key's plain hash", () => {
+    bootstrap();
+    // the mistake worth catching: a version-02 address whose hashbytes are
+    // the key hash rather than the redeem script hash is not this key's
+    // address, and the recipe is what says so
+    expect(
+      claimBtcAddress(
+        alice,
+        ALICE_KEY,
+        ALICE_SATS,
+        btcAddress(hash160Of(privateKeyToPublic(ALICE_KEY)), "02"),
+      ),
+    ).toBeErr(Cl.uint(323)); // WRONG_KEY
+  });
+
+  it("reaches a legacy address made from the uncompressed key", () => {
+    bootstrap();
+    const legacy = btcKeyAddress(ALICE_KEY, "00", { uncompressed: true });
+    const compressed = btcKeyAddress(ALICE_KEY, "00");
+    // the same key, two encodings, two different addresses
+    expect(plain(legacy)).not.toEqual(plain(compressed));
+
+    // and the caller hands over the compressed key either way: the contract
+    // decompresses it to find out which one it is looking at
+    expect(claimBtcAddress(alice, ALICE_KEY, ALICE_SATS, legacy).type).toBe(
+      "ok",
+    );
+    expect(claimBtcAddress(alice, ALICE_KEY, ALICE_SATS, compressed).type).toBe(
+      "ok",
+    );
+  });
+
+  it("does not take an uncompressed key for a segwit address", () => {
+    bootstrap();
+    // segwit allows only the compressed encoding, so an address built from
+    // the 65-byte form is nobody's p2wpkh
+    for (const version of ["02", "04"]) {
+      expect(
+        claimBtcAddress(
+          alice,
+          ALICE_KEY,
+          ALICE_SATS,
+          btcAddress(hash160Of(uncompressedKey(ALICE_KEY)), version),
+        ),
+      ).toBeErr(Cl.uint(323)); // WRONG_KEY
+    }
   });
 
   it("refuses p2wsh and p2tr, which are real addresses and still unprovable", () => {

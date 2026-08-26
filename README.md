@@ -110,7 +110,7 @@ one, and the roll after that is a whole bond term further on.
 | `deposit` | anyone | while a bond is bound and has not started |
 | `deposit-stx` | anyone | to raise the STX behind the pool's sats |
 | `bond-bridge.commit-btc-address` / `reveal-btc-address` | anyone | to join with L1 bitcoin, naming the address it will come from and paying the STX leg |
-| `bond-bridge.claim-btc-address` | anyone | the same in one call, for a p2pkh or p2wpkh address they can sign with |
+| `bond-bridge.claim-btc-address` | anyone | the same in one call, for an address they can sign with — see [the fast lane](#the-fast-lane) |
 | `bond-bridge.complete-btc-deposit` | anyone | once the sBTC signers have swept it |
 | `bond-bridge.claim-principal-to-btc` | a member | to take released principal out as bitcoin |
 | `withdraw` | a depositor | until their deposit is staked |
@@ -245,12 +245,26 @@ contract and nothing else; it does not name the address, and does not need to,
 since the signature is checked against the key the address hashes to. One
 message per member, whatever addresses they bring.
 
-It covers the two shapes whose `hashbytes` is the hash of a public key,
-**p2pkh** and **p2wpkh**, and the key has to be compressed. p2sh and p2wsh hash
-a *script*; p2tr holds a key that has been tweaked by one. None of those three
-can be checked against a bare public key, and Clarity has neither a script
-interpreter nor the curve arithmetic to do better — so they keep the commit and
-the reveal, which is why both lanes stay.
+It covers every shape whose `hashbytes` can be rebuilt from a public key and
+nothing else, which is three of the seven:
+
+| version | | the recipe |
+| --- | --- | --- |
+| `00` | p2pkh | `hash160(key)`, in either encoding |
+| `02` | p2sh-p2wpkh | `hash160(0x0014 ‖ hash160(key))` — the key's own witness program, used as a redeem script |
+| `04` | p2wpkh | `hash160(key)` |
+
+A legacy p2pkh may hash the **uncompressed** key, which is a different 65 bytes
+and so a different address. `secp256k1-decompress?` turns the compressed key the
+caller hands over into the other form, so an old key reaches its old address
+without the caller having to say which encoding it was made from. Segwit allows
+only the compressed form, so the question does not arise for the other two.
+
+The remaining four keep the commit and the reveal, which is why both lanes
+stay. Plain p2sh and p2sh-p2wsh hash a script the contract never sees, and so
+does p2wsh. p2tr is the near miss: a key-path output key is a real curve point,
+so an ECDSA signature over it would verify — but a wallet signing a taproot
+message produces Schnorr, and there is no `schnorr-verify` to check it with.
 
 What it does not do is take an address back. Someone can still reach an address
 through the slow lane first, having only to name it rather than prove it, and
