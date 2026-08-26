@@ -110,6 +110,7 @@ one, and the roll after that is a whole bond term further on.
 | `deposit` | anyone | while a bond is bound and has not started |
 | `deposit-stx` | anyone | to raise the STX behind the pool's sats |
 | `bond-bridge.commit-btc-address` / `reveal-btc-address` | anyone | to join with L1 bitcoin, naming the address it will come from and paying the STX leg |
+| `bond-bridge.claim-btc-address` | anyone | the same in one call, for a p2pkh or p2wpkh address they can sign with |
 | `bond-bridge.complete-btc-deposit` | anyone | once the sBTC signers have swept it |
 | `bond-bridge.claim-principal-to-btc` | a member | to take released principal out as bitcoin |
 | `withdraw` | a depositor | until their deposit is staked |
@@ -226,6 +227,37 @@ send only from the address it revealed.
 
 Commitments are keyed by member as well as digest, so lifting someone's digest
 out of the mempool cannot stop them committing it themselves.
+
+### The fast lane
+
+The commitment exists because a reveal is a claim anyone can copy. A signature
+is not: it names the member, and it only verifies against the key the address
+hashes to. So a member who can sign with their address's key does not have to
+hide it first.
+
+    claim-btc-address(address, public-key, signature, sats)
+
+One call, no delay, and no window to squat in. Sign the bytes
+`get-address-claim-message(member)` returns — computed on chain so a client
+cannot disagree with the contract about what it signed — using the ordinary
+`signmessage` every bitcoin wallet has. The message binds the member and this
+contract and nothing else; it does not name the address, and does not need to,
+since the signature is checked against the key the address hashes to. One
+message per member, whatever addresses they bring.
+
+It covers the two shapes whose `hashbytes` is the hash of a public key,
+**p2pkh** and **p2wpkh**, and the key has to be compressed. p2sh and p2wsh hash
+a *script*; p2tr holds a key that has been tweaked by one. None of those three
+can be checked against a bare public key, and Clarity has neither a script
+interpreter nor the curve arithmetic to do better — so they keep the commit and
+the reveal, which is why both lanes stay.
+
+What it does not do is take an address back. Someone can still reach an address
+through the slow lane first, having only to name it rather than prove it, and
+then it is theirs until `ANNOUNCE_TTL` runs out. It costs them the STX leg the
+whole time and costs the member nothing but the use of one address they have
+others of. Letting a proof evict an unproven claim would be the better end
+state; it is not worth the displacement path it would take to get there.
 
 **Why an address rather than a transaction.** A txid only exists once the
 transaction is built and signed, so version 1 needed a wallet that would sign

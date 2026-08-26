@@ -21,6 +21,13 @@ import {
   privateKeyToPublic,
   signMessageHashRsv,
 } from "@stacks/transactions";
+import { createHash } from "node:crypto";
+
+/** `ripemd160(sha256(x))` — how bitcoin turns a public key into an address. */
+const hash160 = (hex: string) => {
+  const sha = createHash("sha256").update(Buffer.from(hex, "hex")).digest();
+  return createHash("ripemd160").update(sha).digest("hex");
+};
 
 export const POX5 = "ST000000000000000000002AMW42H.pox-5";
 export const SBTC_DEPLOYER = "SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4";
@@ -426,6 +433,46 @@ export const revealBtcAddress = (
     BRIDGE,
     "reveal-btc-address",
     [address, Cl.bufferFromHex(salt)],
+    who,
+  ).result;
+
+/**
+ * The fast lane: a p2wpkh (or p2pkh) address the member can sign for.
+ *
+ * `hash160` of the compressed public key *is* the address, so the key decides
+ * what address these helpers are talking about rather than the other way
+ * round.
+ */
+export const btcKeyAddress = (privateKey: string, version = "04") =>
+  btcAddress(hash160(privateKeyToPublic(privateKey)), version);
+
+/** Sign the exact message the contract will rebuild for `member`. */
+export const signAddressClaim = (member: string, privateKey: string) => {
+  const digest = plain(
+    readBridge("get-address-claim-digest", [Cl.principal(member)]),
+  ) as string;
+  return signMessageHashRsv({
+    messageHash: digest.replace(/^0x/, ""),
+    privateKey,
+  });
+};
+
+export const claimBtcAddress = (
+  who: string,
+  privateKey: string,
+  sats: number,
+  address = btcKeyAddress(privateKey),
+  signature = signAddressClaim(who, privateKey),
+) =>
+  simnet.callPublicFn(
+    BRIDGE,
+    "claim-btc-address",
+    [
+      address,
+      Cl.bufferFromHex(privateKeyToPublic(privateKey)),
+      Cl.bufferFromHex(signature.replace(/^0x/, "")),
+      Cl.uint(sats),
+    ],
     who,
   ).result;
 

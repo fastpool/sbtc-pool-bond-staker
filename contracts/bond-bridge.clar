@@ -18,6 +18,11 @@
 ;;   4. wait                    for the sBTC signers to sweep it
 ;;   5. `complete-btc-deposit`  credit the member, on Stacks
 ;;
+;; ...or, for an address whose key they can sign with, steps 1 and 2 collapse
+;; into `claim-btc-address`: one call, no delay, and nothing to hide, because
+;; a signature is not something a watcher can copy. See `the fast lane` below
+;; for which addresses that covers and why the other four keep the commitment.
+;;
 ;; What changed from version 1
 ;;
 ;; Version 1 committed to the *transaction*: a hash of its txid, then a reveal,
@@ -49,6 +54,11 @@
 ;; So the rule for the member is the same as version 1's, and just as strict:
 ;; do not send until the reveal has confirmed, and then send only from the
 ;; address it revealed.
+;;
+;; None of which the fast lane needs. A signature proves the address is yours
+;; rather than hiding it until you have claimed it, so there is nothing for a
+;; watcher to take: the claim names the member, and it only verifies against
+;; the key the address hashes to. Where it can be used, it should be.
 ;;
 ;; Commitments are keyed by member as well as digest, so copying someone's
 ;; digest out of the mempool cannot deny them their own commit.
@@ -135,6 +145,9 @@
 (define-constant ERR_PARENT_MISMATCH (err u319))
 (define-constant ERR_FOREIGN_INPUT (err u320))
 (define-constant ERR_ANNOUNCED_TOO_LATE (err u321))
+(define-constant ERR_UNPROVABLE_ADDRESS (err u322))
+(define-constant ERR_WRONG_KEY (err u323))
+(define-constant ERR_BAD_SIGNATURE (err u324))
 
 ;; The codes the input check reports through its fold, which cannot return an
 ;; `err` from inside.
@@ -177,6 +190,39 @@
 ;; The cost is up to one bitcoin block of latency before sending, against a
 ;; deposit that then waits on bitcoin confirmations anyway.
 (define-constant REVEAL_DELAY u1)
+
+;;; The fast lane
+;;
+;; Everything above races for an address. This proves one instead: a member who
+;; can sign with the address's own key does not have to hide it first, because
+;; nobody else can produce the signature. No commit, no delay, no window for an
+;; onlooker to squat in -- one call.
+;;
+;; It only covers the two shapes whose `hashbytes` is the hash of a public key,
+;; p2pkh and p2wpkh. p2sh and p2wsh hash a *script*, and p2tr holds a key that
+;; has been tweaked by one; none of the three can be checked against a bare
+;; pubkey, and Clarity has neither the script interpreter nor the curve
+;; arithmetic to do better. Those keep the commit and the reveal, which is why
+;; both paths stay.
+;;
+;; The key has to be compressed, which is what `secp256k1-verify` takes. A
+;; legacy p2pkh over an uncompressed key hashes to a different address and
+;; cannot come this way.
+
+;; Lowercase hex, one byte per digit.
+(define-constant HEX_DIGITS 0x30313233343536373839616263646566)
+
+;; What bitcoin puts in front of anything a wallet signs with `signmessage`:
+;; a length byte and then "Bitcoin Signed Message:\n". Signing the claim in
+;; that format is what lets an ordinary wallet produce it at all -- the same
+;; reason version 2 commits to an address rather than a transaction.
+(define-constant BTC_SIGNED_MESSAGE 0x18426974636f696e205369676e6564204d6573736167653a0a)
+
+;; "fastpool bond address claim: ", the readable half of what gets signed. The
+;; 40 hex digits after it bring the message to 69 bytes, hence the 0x45 length
+;; that follows the prefix above.
+(define-constant CLAIM_PREFIX 0x66617374706f6f6c20626f6e64206164647265737320636c61696d3a20)
+(define-constant CLAIM_LENGTH 0x45)
 
 ;; How many inputs a deposit transaction may have. Each one costs a parent
 ;; transaction to hand over and a scriptPubKey to check, and a transaction with
@@ -516,6 +562,65 @@
   )
 )
 
+(define-private (hex-digit (nibble uint))
+  (unwrap-panic (element-at? HEX_DIGITS nibble))
+)
+
+(define-private (hex-byte
+    (byte (buff 1))
+    (acc (buff 40))
+  )
+  (let ((value (buff-to-uint-be byte)))
+    (unwrap-panic (as-max-len?
+      (concat acc (hex-digit (/ value u16)) (hex-digit (mod value u16)))
+      u40
+    ))
+  )
+)
+
+;; The exact bytes a member signs with their bitcoin key to claim an address.
+;;
+;; Built here rather than off chain for the same reason `get-address-digest`
+;; is: a client cannot then disagree with the contract about what it signed.
+;; Show the user this, verbatim -- it is ASCII, and it is what their wallet
+;; will display.
+;;
+;; What it binds is the member and this contract, and nothing else. It does not
+;; name the address, and does not need to: the signature is checked against the
+;; key the address hashes to, so a signature made for one address cannot verify
+;; against another. One message per member, whatever addresses they bring.
+(define-read-only (get-address-claim-message (member principal))
+  (concat CLAIM_PREFIX
+    (fold hex-byte
+      (hash160 (unwrap-panic (to-consensus-buff? {
+        contract: current-contract,
+        member: member,
+      })))
+      0x
+    ))
+)
+
+;; ...and the digest bitcoin's own message signing takes over it. A wallet's
+;; `signmessage` computes exactly this; it is here so a test, or a client that
+;; would rather check than trust, can compare.
+(define-read-only (get-address-claim-digest (member principal))
+  (sha256 (sha256
+    (concat BTC_SIGNED_MESSAGE CLAIM_LENGTH (get-address-claim-message member))
+  ))
+)
+
+;; Whether an address is one this contract can hold a member to by signature.
+;; See `HEX_DIGITS` above for why the other four shapes are not.
+(define-read-only (is-provable-address (address {
+  version: (buff 1),
+  hashbytes: (buff 32),
+}))
+  (and
+    (or (is-eq (get version address) 0x00) (is-eq (get version address) 0x04))
+    (is-eq (len (get hashbytes address)) u20)
+  )
+)
+
 (define-read-only (get-commitment
     (member principal)
     (digest (buff 32))
@@ -743,6 +848,82 @@
         cancellable-from: (+ burn-block-height ANNOUNCE_TTL),
       }))
       (print (merge { topic: "reveal-btc-address" } result))
+      (ok result)
+    )
+  )
+)
+
+;; Steps 1 and 2 at once, for an address you can sign with.
+;;
+;; The commit exists because the reveal is a claim anyone watching the mempool
+;; could copy. A signature is not copyable: it names the member, and it only
+;; verifies against the key the address hashes to. So there is nothing to hide
+;; and nothing to wait for -- sign `get-address-claim-message`, send it here,
+;; and the address is yours in one transaction.
+;;
+;; Send once this has confirmed, exactly as with a reveal, and from this
+;; address only.
+;;
+;; What this does *not* do is take an address back. If someone got here first
+;; through the slow lane -- which they can, having only to name an address
+;; rather than prove it -- this fails with ERR_ADDRESS_ANNOUNCED and the
+;; address is theirs until ANNOUNCE_TTL runs out. It costs them the STX leg the
+;; whole time, and it costs the member nothing but the use of one address they
+;; have others of. Letting a proof evict an unproven claim would be the better
+;; end state and is not worth the displacement path it would take to get there.
+(define-public (claim-btc-address
+    (address {
+      version: (buff 1),
+      hashbytes: (buff 32),
+    })
+    (public-key (buff 33))
+    (signature (buff 65))
+    (sats uint)
+  )
+  (let (
+      (member tx-sender)
+      (script (unwrap! (get-address-script address) ERR_UNSUPPORTED_ADDRESS))
+      ;; Reserves the pool's room and tells us what the STX leg comes to, the
+      ;; same call the commit makes. Nothing here has committed anything yet:
+      ;; every assert below unwinds it.
+      (ustx (try! (contract-call? .bond-staker reserve-bridged-deposit member sats)))
+    )
+    (asserts! (> sats u0) ERR_INVALID_AMOUNT)
+    (asserts! (is-provable-address address) ERR_UNPROVABLE_ADDRESS)
+    ;; The key is the address: hash it and the two have to agree before its
+    ;; signature means anything about this address at all.
+    (asserts! (is-eq (hash160 public-key) (get hashbytes address)) ERR_WRONG_KEY)
+    (asserts!
+      (secp256k1-verify (get-address-claim-digest member) signature public-key)
+      ERR_BAD_SIGNATURE
+    )
+
+    ;; First claim takes the address, proven or not -- the same map and the
+    ;; same rule the reveal plays by.
+    (asserts!
+      (map-insert announcements script {
+        member: member,
+        sats: sats,
+        ustx: ustx,
+        announced-at-height: burn-block-height,
+      })
+      ERR_ADDRESS_ANNOUNCED
+    )
+
+    ;; The STX leg is paid now and held here until the sats arrive, as it would
+    ;; have been at the commit.
+    (try! (stx-transfer? ustx member current-contract))
+
+    (let ((result {
+        member: member,
+        address: address,
+        script: script,
+        sats: sats,
+        ustx: ustx,
+        deposit-to: (get-deposit-address),
+        cancellable-from: (+ burn-block-height ANNOUNCE_TTL),
+      }))
+      (print (merge { topic: "claim-btc-address" } result))
       (ok result)
     )
   )

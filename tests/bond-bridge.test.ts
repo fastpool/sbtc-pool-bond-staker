@@ -53,6 +53,9 @@ import {
   treasuryPrincipal,
   unattributedPrincipal,
   unstakeSbtc,
+  btcKeyAddress,
+  claimBtcAddress,
+  signAddressClaim,
 } from "./helpers/bond-fixture";
 import { buildTx, fundedDeposit, scriptFor, txidOf } from "./helpers/btc-tx";
 import { parseTx, txidOf as txidOfAsync } from "../lib/btc-tx.js";
@@ -223,6 +226,157 @@ describe("bond-bridge: announcing an address", () => {
     simnet.mineEmptyBurnBlocks(1);
     expect(cancelBtcAddress(aliceAddress, carol).type).toBe("ok");
     expect(Number(poolTotals()["announced-sats"])).toBe(0);
+  });
+});
+
+describe("bond-bridge: claiming an address by signature", () => {
+  // Two bitcoin keys. `hash160` of the compressed public key is the address,
+  // so these decide what alice and bob are sending from rather than the
+  // other way round.
+  const ALICE_KEY = "a7".repeat(32) + "01";
+  const BOB_KEY = "b3".repeat(32) + "01";
+
+  it("takes an address in one call, with no delay to wait out", () => {
+    bootstrap();
+    const address = btcKeyAddress(ALICE_KEY);
+
+    // no commit, and no burn block between: the proof is what the commitment
+    // was standing in for
+    expect(claimBtcAddress(alice, ALICE_KEY, ALICE_SATS).type).toBe("ok");
+
+    const announced = btcAnnouncement(address) as any;
+    expect(announced.member).toBe(alice);
+    expect(Number(announced.sats)).toBe(ALICE_SATS);
+    expect(Number(poolTotals()["announced-sats"])).toBe(ALICE_SATS);
+  });
+
+  it("takes the STX leg, the same as a commit does", () => {
+    bootstrap();
+    const stxBefore = stxBalance(alice);
+    expect(claimBtcAddress(alice, ALICE_KEY, ALICE_SATS).type).toBe("ok");
+
+    expect(stxBalance(alice)).toBeLessThan(stxBefore);
+    expect(stxBalance(bridgePrincipal())).toBe(stxBefore - stxBalance(alice));
+
+    // and it comes back if the announcement is called off
+    expect(cancelBtcAddress(btcKeyAddress(ALICE_KEY), alice).type).toBe("ok");
+    expect(stxBalance(alice)).toBe(stxBefore);
+  });
+
+  it("refuses a key that is not the address", () => {
+    bootstrap();
+    // bob's key, alice's address: the hash does not match, so the signature
+    // is never even reached
+    expect(
+      claimBtcAddress(alice, BOB_KEY, ALICE_SATS, btcKeyAddress(ALICE_KEY)),
+    ).toBeErr(Cl.uint(323)); // WRONG_KEY
+    expect(btcAnnouncement(btcKeyAddress(ALICE_KEY))).toBeNull();
+  });
+
+  it("refuses somebody else's signature", () => {
+    bootstrap();
+    // the message names the member, so alice's proof does nothing for bob --
+    // which is what stops a watcher lifting it out of the mempool
+    const alicesProof = signAddressClaim(alice, ALICE_KEY);
+    expect(
+      claimBtcAddress(
+        bob,
+        ALICE_KEY,
+        BOB_SATS,
+        btcKeyAddress(ALICE_KEY),
+        alicesProof,
+      ),
+    ).toBeErr(Cl.uint(324)); // BAD_SIGNATURE
+
+    // and the address is still there for its owner
+    expect(claimBtcAddress(alice, ALICE_KEY, ALICE_SATS).type).toBe("ok");
+  });
+
+  it("refuses an address whose key cannot be checked", () => {
+    bootstrap();
+    // p2sh, p2wsh and p2tr hash a script or a tweaked key, so a bare public
+    // key says nothing about them. They keep the commit and the reveal.
+    for (const version of ["01", "02", "03"]) {
+      expect(
+        claimBtcAddress(
+          alice,
+          ALICE_KEY,
+          ALICE_SATS,
+          btcKeyAddress(ALICE_KEY, version),
+        ),
+      ).toBeErr(Cl.uint(322)); // UNPROVABLE_ADDRESS
+    }
+  });
+
+  it("works for p2pkh as well as p2wpkh", () => {
+    bootstrap();
+    // both hash the same public key the same way, so one key proves either
+    const legacy = btcKeyAddress(ALICE_KEY, "00");
+    expect(
+      claimBtcAddress(alice, ALICE_KEY, ALICE_SATS, legacy).type,
+    ).toBe("ok");
+    expect((btcAnnouncement(legacy) as any).member).toBe(alice);
+
+    // and they are different addresses, so the segwit one is still free
+    expect(claimBtcAddress(alice, ALICE_KEY, ALICE_SATS).type).toBe("ok");
+  });
+
+  it("refuses p2wsh and p2tr, which are real addresses and still unprovable", () => {
+    bootstrap();
+    // 32 bytes, so these get as far as a script -- and stop at the proof,
+    // because a script hash and a tweaked key are not hashes of this key
+    for (const version of ["05", "06"]) {
+      expect(
+        claimBtcAddress(
+          alice,
+          ALICE_KEY,
+          ALICE_SATS,
+          btcAddress("c4".repeat(32), version),
+        ),
+      ).toBeErr(Cl.uint(322)); // UNPROVABLE_ADDRESS
+    }
+  });
+
+  it("cannot take an address the slow lane already holds", () => {
+    bootstrap();
+    const address = btcKeyAddress(ALICE_KEY);
+    // a squatter names it without proving anything, and gets there first
+    expect(announceBtcAddress(bob, BOB_SATS, address).type).toBe("ok");
+    expect(claimBtcAddress(alice, ALICE_KEY, ALICE_SATS)).toBeErr(Cl.uint(303));
+
+    // it costs the squatter the STX leg until the announcement runs out
+    simnet.mineEmptyBurnBlocks(ANNOUNCE_TTL);
+    expect(cancelBtcAddress(address, carol).type).toBe("ok");
+    expect(claimBtcAddress(alice, ALICE_KEY, ALICE_SATS).type).toBe("ok");
+  });
+
+  it("carries a real deposit through, exactly as a reveal would", () => {
+    bootstrap();
+    // the end-to-end proof: an address taken by signature is the same
+    // announcement `complete-btc-deposit` reads, so the sats land the same way
+    const address = btcKeyAddress(ALICE_KEY);
+    const hash = (plain(address) as any).hashbytes.replace(/^0x/, "");
+    expect(claimBtcAddress(alice, ALICE_KEY, ALICE_SATS).type).toBe("ok");
+
+    const funded = depositFrom(hash);
+    expect(sweep(funded.txid, ALICE_SATS).type).toBe("ok");
+    expect(completeBtcDeposit(funded.txid, funded.tx, funded.parents).type).toBe(
+      "ok",
+    );
+    expect(Number(member(alice)["queued-sats"])).toBe(ALICE_SATS);
+    // and the announcement is spent, not left holding the address
+    expect(btcAnnouncement(address)).toBeNull();
+  });
+
+  it("holds one live announcement per address, either lane", () => {
+    bootstrap();
+    expect(claimBtcAddress(alice, ALICE_KEY, ALICE_SATS).type).toBe("ok");
+    // the same address, the other way round
+    expect(
+      announceBtcAddress(bob, BOB_SATS, btcKeyAddress(ALICE_KEY)),
+    ).toBeErr(Cl.uint(303));
+    // ...and bob's own is free
+    expect(claimBtcAddress(bob, BOB_KEY, BOB_SATS).type).toBe("ok");
   });
 });
 
