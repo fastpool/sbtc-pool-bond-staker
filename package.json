@@ -24,7 +24,7 @@
     "simulate:bridge": "node scripts/build-network.mjs mainnet && node scripts/simulate-mainnet.mjs bridge"
   },
   "author": "",
-  "license": "ISC",
+  "license": "CC0-1.0",
   "dependencies": {
     "@stacks/clarinet-sdk": "^3.9.0",
     "@stacks/transactions": "^7.2.0",

@@ -741,3 +741,12 @@ describe code that is deployed or about to be — [why the bridge commits before
 it reveals](docs/address-front-running.md) is the one worth reading before
 touching that flow. Shelved notes are design work that was parked, kept for the
 findings rather than the ideas: which shapes Clarity will not allow, and why.
+
+## License
+
+Public domain, under [CC0 1.0 Universal](LICENSE). No rights reserved: copy it,
+change it, deploy it, sell what you build on it, with or without attribution
+and with no obligation back. `v1/` is covered by the same dedication.
+
+The one thing CC0 does not do is waive patent or trademark rights, and nothing
+here claims any.
