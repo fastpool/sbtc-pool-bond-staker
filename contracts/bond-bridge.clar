@@ -166,7 +166,7 @@
 ;; The same, for a commitment that was never revealed -- and much shorter,
 ;; because a commitment is not a deposit in flight. Nothing has been sent, and
 ;; the member is not waiting on bitcoin to do anything: in the ordinary flow the
-;; reveal follows one block later. Six hours is generous against a stalled
+;; reveal follows a couple of blocks later. Six hours is generous against a stalled
 ;; wallet while leaving a squatter far less room to hold the pool's allocation
 ;; -- or somebody's address -- for.
 ;;
@@ -175,21 +175,45 @@
 ;; price.
 (define-constant COMMIT_TTL u36)
 
-;; How long a commitment has to sit before it may be revealed. Without it a
-;; member could commit and reveal in one block -- and so could an onlooker who
-;; saw that reveal in the mempool, pairing their own commit with it and racing
-;; for the same address.
+;; How long a commitment has to sit before it may be revealed.
 ;;
-;; Burn blocks rather than Stacks blocks, and not only for consistency with
-;; every other deadline here. The delay is the margin the honest reveal has to
-;; get mined: an attacker copying it has to fit a commit *and* a reveal around
-;; the same wait, so the reveal they are racing only loses if it stays in the
-;; mempool longer than the delay. A burn block is ten minutes of that margin; a
-;; Stacks block would be a few seconds, which fee competition can eat.
+;; What it is for: an announcement is settled by whichever reveal is mined
+;; first, and a reveal names the address in the clear, so an onlooker who sees
+;; one in the mempool can open their own commitment against it and race. The
+;; delay is the margin the honest reveal has to get mined in -- the attacker
+;; has to fit a commit *and* a reveal around the same wait, so they only win if
+;; the reveal they are copying stays unmined for longer than the delay.
 ;;
-;; The cost is up to one bitcoin block of latency before sending, against a
-;; deposit that then waits on bitcoin confirmations anyway.
-(define-constant REVEAL_DELAY u1)
+;; Burn blocks, because a burn block is the one clock an attacker cannot pay to
+;; speed up. In Stacks blocks the same two-step sequence closes in seconds, and
+;; seconds is a margin fee competition eats: the copier bids both of their
+;; transactions to the front while the reveal they are racing sits where it
+;; was.
+;;
+;; Two rather than one, because `burn-block-height` is per *tenure* and every
+;; Stacks block within a tenure reports the same one. At u1 a commit landing in
+;; the last Stacks block of tenure N can reveal in the first of tenure N+1,
+;; seconds later -- so the guaranteed margin was zero and the expected one was
+;; however long until the next bitcoin block. At u2 the whole of tenure N+1 has
+;; to pass whenever in its tenure the commit landed, so the floor is a full
+;; bitcoin block rather than a ceiling.
+;;
+;; It does not make the race unwinnable, and it is not what protects the
+;; member's money: a lost race costs nothing to anyone who follows the rule
+;; above and waits for their reveal to confirm before sending. What it buys is
+;; that losing takes a reveal genuinely stuck for ten minutes rather than one
+;; unlucky moment, which is a fee problem a member can see and fix.
+;;
+;; BNS-V2 asks the same of a name -- `> created-at + u1`, so two -- for what is
+;; the same race over a scarcer thing. It can afford to lean on the delay less
+;; than this contract can: a contested name there is settled by comparing
+;; preorder heights, so mining order decides nothing, while an announcement
+;; here is settled by whoever inserts first.
+;;
+;; The cost is up to two bitcoin blocks before sending, against a deposit that
+;; then waits on the sBTC sweep, which is hours. Members whose address can be
+;; proven skip all of it -- see `claim-btc-address`.
+(define-constant REVEAL_DELAY u2)
 
 ;;; The fast lane
 ;;

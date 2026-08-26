@@ -421,7 +421,7 @@ export const sbtcSigner = () =>
 /** The salt most tests use; only the commit/reveal tests care which it is. */
 export const SALT = "5a".repeat(32);
 
-export const REVEAL_DELAY = 1;
+export const REVEAL_DELAY = 2;
 
 /** Burn blocks before a stranger may clear an unrevealed commitment. */
 export const COMMIT_TTL = 36;

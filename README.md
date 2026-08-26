@@ -212,9 +212,28 @@ it confirms: an onlooker could resend the same announcement with a higher fee,
 take the address, and be credited for the bitcoin that followed. The commit
 closes that window — a salted digest names nothing — and the reveal closes the
 copy of it, since a commitment made after seeing a reveal is behind that reveal
-and first reveal takes the address. The `REVEAL_DELAY` of one block stops a
-commit and its reveal sharing a block, which would let an onlooker pair their
-own commit with the reveal they just saw.
+and first reveal takes the address. `REVEAL_DELAY` is the margin the honest
+reveal has to get mined in: an onlooker copying it has to fit a commit *and* a
+reveal around the same wait, so they only win if the reveal they are racing
+stays unmined for longer than the delay.
+
+It is **two burn blocks**, and both halves of that matter. Burn blocks because
+a bitcoin block is the one clock an attacker cannot pay to speed up — in Stacks
+blocks the same two-step sequence closes in seconds, and seconds is a margin
+fee competition eats. Two because `burn-block-height` is per *tenure*: at one,
+a commit landing in the last Stacks block of a tenure can reveal in the first
+block of the next, seconds later, so the guaranteed margin was zero. At two the
+whole of the intervening tenure has to pass, whichever moment the commit
+landed in.
+
+BNS-V2 asks the same of a name (`> created-at + u1`) for the same race over a
+scarcer thing — though it leans on the delay less than this contract can, since
+a contested name there is settled by comparing preorder heights rather than by
+who was mined first.
+
+The delay does not make the race unwinnable, and it is not what protects a
+member's money — the rule below is. What it buys is that losing takes a reveal
+genuinely stuck for ten minutes rather than one unlucky moment.
 
 What the commitment cannot do is make an address secret that already is not: one
 seen anywhere on bitcoin can be committed to by anyone at any time and revealed
