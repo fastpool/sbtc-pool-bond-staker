@@ -1,8 +1,22 @@
 # docs/
 
-Design work that was done and then parked. Nothing in here is a plan of
-record, and nothing in here has been built — the contracts are the contracts,
-and the README beside them is what they do.
+Longer notes than a contract comment has room for. Two kinds, and the
+difference matters — one describes the contracts, the other describes roads not
+taken.
+
+## Reference
+
+About code that is deployed or about to be. These are meant to stay true; if
+one disagrees with a contract, the contract is right and the note is stale.
+
+| note | about |
+| --- | --- |
+| [address-front-running.md](address-front-running.md) | Why `bond-bridge` commits before it reveals, why the wait is two bitcoin blocks, what it does and does not protect, and how BNS-V2's version of the same race differs |
+
+## Shelved
+
+Design work that was done and then parked. Nothing here is built, and nothing
+here is a plan of record.
 
 The point of keeping it is that the expensive part of a design is rarely the
 design. It is the two afternoons spent finding out which shapes the language

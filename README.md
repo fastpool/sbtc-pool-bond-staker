@@ -235,6 +235,10 @@ The delay does not make the race unwinnable, and it is not what protects a
 member's money — the rule below is. What it buys is that losing takes a reveal
 genuinely stuck for ten minutes rather than one unlucky moment.
 
+The whole analysis, including why the attacker cannot reuse your commitment and
+why BNS-V2's answer to the same race does not transfer, is in
+[docs/address-front-running.md](docs/address-front-running.md).
+
 What the commitment cannot do is make an address secret that already is not: one
 seen anywhere on bitcoin can be committed to by anyone at any time and revealed
 first. That costs its owner nothing but the attempt — their reveal fails, they
@@ -730,8 +734,10 @@ relative path out of the sibling `fastpool-pox-5` project until that project
 renamed one of them, at which point the whole suite stopped starting and said
 only that a worker had failed to start.
 
-## Shelved
+## Longer notes
 
-[docs/](docs/) holds design work that was done and then parked — nothing there
-is built, and nothing there is a plan of record. It is kept for the findings
-rather than the ideas: which shapes Clarity will not allow, and why.
+[docs/](docs/) holds what does not fit in a contract comment. Reference notes
+describe code that is deployed or about to be — [why the bridge commits before
+it reveals](docs/address-front-running.md) is the one worth reading before
+touching that flow. Shelved notes are design work that was parked, kept for the
+findings rather than the ideas: which shapes Clarity will not allow, and why.
