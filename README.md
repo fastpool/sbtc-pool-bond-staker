@@ -652,7 +652,7 @@ the fuzzing surface is put together and what it has caught.
 The two signer-manager contracts the tests stake through are vendored under
 `tests/contracts/`, so a checkout of this repository is the whole of what
 `pnpm test` needs. `fastpool-max500-signer-manager` is the published mainnet
-contract -- the one this pool is built to stake through -- with the pox-5 boot
+contract — the one this pool is built to stake through — with the pox-5 boot
 address rewritten for simnet; `fastpool-signer-manager` is v1, and is there to
 be the *other* manager, since the pool vets managers by code hash and can be
 moved between them.
@@ -664,3 +664,9 @@ without changing anything and without failing the run. They were referenced by
 relative path out of the sibling `fastpool-pox-5` project until that project
 renamed one of them, at which point the whole suite stopped starting and said
 only that a worker had failed to start.
+
+## Shelved
+
+[docs/](docs/) holds design work that was done and then parked — nothing there
+is built, and nothing there is a plan of record. It is kept for the findings
+rather than the ideas: which shapes Clarity will not allow, and why.
