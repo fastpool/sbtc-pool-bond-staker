@@ -41,9 +41,11 @@ import {
   member,
   NEXT_BOND_INDEX,
   payRewards,
+  poolConfig,
   poolTotals,
   requestExit,
   requiredUstx,
+  rewardEpoch,
   sbtcBalance,
   setupBond,
   STX_VALUE_RATIO,
@@ -270,6 +272,27 @@ describe("bond-staker: what leaving early costs", () => {
     expect(Number(empty["at-risk-rewards"])).toBe(0);
   });
 
+  it("reports nothing at risk while an earlier epoch is still the one paying", () => {
+    // Carol joins at the roll, so epoch 1 has a different membership and a
+    // different denominator from epoch 0.
+    setupBond(NEXT_BOND_INDEX);
+    bindNextBond();
+    deposit(carol, ALICE_SATS);
+    advanceToBurnHeight(bondStartHeight(NEXT_BOND_INDEX) - 288);
+    expect(stake().type).toBe("ok");
+    avoidPreparePhase();
+
+    // Epoch 0's last cycle is still paying, and alice's claim on it is a
+    // stash. Leaving epoch 1 cannot forfeit it.
+    expect(rewardEpoch()).toBe(0);
+    payRewards(deployer, 4_000_000);
+    expect(Number(earlyUnstakePreview(alice)["at-risk-rewards"])).toBe(0);
+
+    expect(unstakeEarly(alice, ALICE_SATS).type).toBe("ok");
+    expect(syncRewards().type).toBe("ok");
+    expect(claimableRewards(alice)).toBe((4_000_000 * ALICE_SATS) / POOL_SATS);
+  });
+
   it("never pays out more reward than it recognised, across an exit", () => {
     payRewards(deployer, 3_333_333);
     expect(syncRewards().type).toBe("ok");
@@ -464,6 +487,29 @@ describe("bond-staker: the rest of the pool is undisturbed", () => {
     expect(Number(epoch(0)["total-shares"])).toBe(
       Number(epoch(0)["staked-sats"]),
     );
+  });
+
+  it("winds down with nothing left in pox-5", () => {
+    const { unlockHeight } = stakeFirstBond();
+    expect(unstakeEarly(alice, ALICE_SATS).type).toBe("ok");
+    expect(unstakeEarly(bob, BOB_SATS).type).toBe("ok");
+    expect(Number(poolTotals()["bonded-sats"])).toBe(0);
+    expect(Number(epoch(0)["total-shares"])).toBe(0);
+
+    // Nothing to pull out of pox-5, but the STX leg is still locked and the
+    // unlock height still gates the call.
+    expect(unstakeSbtc()).toBeErr(Cl.uint(108)); // TOO_EARLY
+    advanceToBurnHeight(unlockHeight);
+    expect(unstakeSbtc().type).toBe("ok");
+    expect(poolConfig().finished).toBe(true);
+
+    // Both took their sats early; their STX comes back at the wind-down.
+    const stxBefore = { alice: stxBalance(alice), bob: stxBalance(bob) };
+    expect(claimPrincipal(alice).type).toBe("ok");
+    expect(claimPrincipal(bob).type).toBe("ok");
+    expect(stxBalance(alice)).toBe(stxBefore.alice + requiredUstx(ALICE_SATS));
+    expect(stxBalance(bob)).toBe(stxBefore.bob + requiredUstx(BOB_SATS));
+    expect(treasuryBalance()).toBe(0);
   });
 
   it("still rolls, still winds down, still pays out", () => {

@@ -118,12 +118,13 @@
 ;; Which epoch a reward belongs to
 ;;
 ;; Rewards arrive as a bare sBTC transfer, carrying no record of the cycle they
-;; are for, so the pool dates them by the clock. pox-5 settles a reward cycle
-;; only once that cycle has ended, so a bond's final cycle pays out *after* the
-;; roll that replaced it: an epoch keeps taking rewards until the epoch after it
-;; has a full reward cycle behind it, and `sync-rewards` credits the oldest
-;; epoch still paying. At most two are, and the latest never settles, so a late
-;; payment is never stranded.
+;; are for, so the pool dates them by the clock. pox-5 pays out twice per reward
+;; cycle, and each payout covers the cycle that has just ended -- so a bond's
+;; final cycle pays out at the *start* of the cycle the roll moved on to, and
+;; that cycle's own first payout comes half a cycle later. An epoch therefore
+;; keeps taking rewards until the midpoint of the next epoch's first cycle, and
+;; `sync-rewards` credits the oldest epoch still paying. At most two are, and
+;; the latest never settles, so a late payment is never stranded.
 ;;
 ;; Two clocks, then, and they are deliberately not the same one:
 ;;
@@ -138,8 +139,8 @@
 ;; member out of an epoch that is still paying, their claim on it -- the shares
 ;; they held and the point they had drawn it down to -- is set aside, and
 ;; `accrue-stash` keeps drawing it until that epoch settles. Only ever one
-;; stash: an epoch settles a cycle into the next one, and the roll after that
-;; is a bond term further on.
+;; stash: an epoch settles half a cycle into the next one, and the roll after
+;; that is a bond term further on.
 ;;
 ;; The STX/sBTC split
 ;;
@@ -178,8 +179,9 @@
 ;;   deposit-stx   anyone, to raise the STX behind the pool's sats.
 ;;   withdraw      anyone, for their own queued deposit, until it is staked.
 ;;   stake         permissionless, inside a window of STAKE_WINDOW burn blocks
-;;                 before the bound bond starts. The first call opens epoch 0;
-;;                 every later call rolls the position into the next bond.
+;;                 ending where the prepare phase before the bound bond opens.
+;;                 The first call opens epoch 0; every later call rolls the
+;;                 position into the next bond.
 ;;   request-exit  a member, to be released at the next roll.
 ;;   unstake-sbtc-early
 ;;                 a member, for committed sBTC they want back now rather
@@ -253,9 +255,9 @@
 ;; a bond they had no chance to read the terms of and `request-exit` from.
 ;;
 ;; ~4 days. It has to fit inside the window pox-5 allows for `setup-bond` --
-;; two cycles before the bond starts -- with the STAKE_WINDOW still to come
-;; after it, which it does on both mainnet (2100-block cycles) and testnet
-;; (900).
+;; two cycles before the bond starts -- with the STAKE_WINDOW and the prepare
+;; phase it stops short of still to come after it, which it does on both
+;; mainnet (2100-block cycles, 100-block prepare) and testnet (900/50).
 (define-constant BIND_NOTICE u576)
 
 ;; How many bond periods ahead `bind-next-bond` looks for one this pool can
@@ -280,7 +282,10 @@
 ;; cap would be on the step and not on the distance.
 (define-constant MAX_SKIP u100)
 
-;; How long before the bond starts `stake` may be called, in burn blocks.
+;; How long the window in which `stake` may be called runs, in burn blocks. It
+;; closes where the prepare phase before the bond starts opens, not at the
+;; start itself -- see `stake-window-end-of`.
+;;
 ;; ~2 days: long enough to get the transaction mined, short enough that
 ;; deposits stay open for as long as possible. Comfortably inside pox-5's own
 ;; roll-over window, which opens half a reward cycle before the bond starts.
@@ -570,6 +575,7 @@
     start-height: (var-get pending-start-height),
     unlock-burn-height: (var-get pending-unlock-height),
     stake-opens-at: (stake-window-start),
+    stake-closes-at: (stake-window-end),
     stakeable: (can-still-stake),
     bound-at-height: (var-get bound-at-height),
     notice-ends-at: (+ (var-get bound-at-height) BIND_NOTICE),
@@ -724,11 +730,38 @@
   )
 )
 
-;; When the stake window opens for a bond starting at `start`.
+;; The last blocks of a reward cycle, in which pox-5 freezes the next cycle's
+;; staker set and will register nobody for a bond. Read from pox-5 rather than
+;; assumed: mainnet and testnet use different lengths.
+(define-read-only (get-prepare-length)
+  (get prepare-cycle-length
+    (unwrap-panic (contract-call? 'ST000000000000000000002AMW42H.pox-5 get-pox-info))
+  )
+)
+
+;; When the stake window closes for a bond starting at `start`.
+;;
+;; A bond period begins on a reward cycle boundary, so the blocks right before
+;; `start` are the previous cycle's prepare phase and pox-5 refuses to register
+;; there. The window stops at the prepare phase rather than at `start`, so that
+;; every block of it is one the roll can actually be made in.
+(define-read-only (stake-window-end-of (start uint))
+  (let ((prepare (get-prepare-length)))
+    (if (> start prepare)
+      (- start prepare)
+      u0
+    )
+  )
+)
+
+;; When the stake window opens for a bond starting at `start`: STAKE_WINDOW
+;; blocks before it closes.
 (define-read-only (stake-window-start-of (start uint))
-  (if (> start STAKE_WINDOW)
-    (- start STAKE_WINDOW)
-    u0
+  (let ((closes (stake-window-end-of start)))
+    (if (> closes STAKE_WINDOW)
+      (- closes STAKE_WINDOW)
+      u0
+    )
   )
 )
 
@@ -737,12 +770,17 @@
   (stake-window-start-of (var-get pending-start-height))
 )
 
-;; False once the bound bond has started without the pool: it can no longer be
-;; staked, and `bind-next-bond` may replace it.
+;; First burn height at which it is too late.
+(define-read-only (stake-window-end)
+  (stake-window-end-of (var-get pending-start-height))
+)
+
+;; False once the bound bond's window has closed without the pool: it can no
+;; longer be staked, and `bind-next-bond` may replace it.
 (define-read-only (can-still-stake)
   (and
     (var-get bond-bound)
-    (< burn-block-height (var-get pending-start-height))
+    (< burn-block-height (stake-window-end))
   )
 )
 
@@ -754,24 +792,26 @@
   (is-some (map-get? epochs (+ epoch u1)))
 )
 
-;; Rewards run on a slower clock. pox-5 settles a reward cycle only once that
-;; cycle has ended, so a bond's final cycle pays out *after* the roll that
-;; replaced it -- an epoch therefore keeps taking rewards until the epoch after
-;; it has a full reward cycle behind it. The latest epoch never settles, so a
-;; late payment is never stranded.
+;; Rewards run on a slower clock. pox-5 pays out twice per reward cycle, each
+;; payout covering the cycle that has just ended -- so a bond's final cycle
+;; pays out at the start of the cycle the roll moved on to, and that cycle's
+;; own first payout comes half a cycle later. An epoch therefore keeps taking
+;; rewards until the midpoint of the next epoch's first cycle. The latest
+;; epoch never settles, so a late payment is never stranded.
 (define-read-only (is-epoch-settled (epoch uint))
   (match (map-get? epochs (+ epoch u1))
     next (>= burn-block-height
       (contract-call? 'ST000000000000000000002AMW42H.pox-5
-        reward-cycle-to-burn-height (+ (get first-reward-cycle next) u1)
+        distribution-cycle-to-burn-height
+        (+ (* (get first-reward-cycle next) u2) u1)
       ))
     false
   )
 )
 
 ;; The epoch `sync-rewards` credits: the oldest one still taking rewards. At
-;; most two are, since an epoch settles one cycle into the next and a bond runs
-;; for twelve.
+;; most two are, since an epoch settles half a cycle into the next and a bond
+;; runs for twelve.
 (define-read-only (get-reward-epoch)
   (let ((count (var-get epoch-count)))
     (if (is-eq count u0)
@@ -916,14 +956,25 @@
 ;;   ustx-at-roll     the STX leg, which the roll releases rather than this
 ;;   banked-rewards   what they have already accrued, which they keep
 ;;   at-risk-rewards  reward sBTC the pool is holding but has not recognised
-;;                    yet, at their current weight -- forfeited unless
-;;                    `sync-rewards` is called first, which anyone may do
+;;                    yet, at their live-epoch weight -- forfeited unless
+;;                    `sync-rewards` is called first, which anyone may do.
+;;                    Zero while an earlier epoch is still the one taking
+;;                    rewards: the claim on that one is a stash, and leaving
+;;                    the live epoch does not disturb it.
 (define-read-only (get-early-unstake-preview (member principal))
   (match (map-get? members member)
     stored (let (
         (record (settle stored))
-        (live-shares (match (get-live-epoch)
-          live (get total-shares live)
+        (at-risk (match (get-live-epoch)
+          live (let ((live-shares (get total-shares live)))
+            (if (and
+                (is-eq (get-reward-epoch) (some (- (var-get epoch-count) u1)))
+                (> live-shares u0)
+              )
+              (/ (* (get-unrecognized-rewards) (get shares record)) live-shares)
+              u0
+            )
+          )
           u0
         ))
       )
@@ -931,10 +982,7 @@
         sats: (get bonded-sats record),
         ustx-at-roll: (get bonded-ustx record),
         banked-rewards: (get pending record),
-        at-risk-rewards: (if (> live-shares u0)
-          (/ (* (get-unrecognized-rewards) (get shares record)) live-shares)
-          u0
-        ),
+        at-risk-rewards: at-risk,
       }
     )
     {
@@ -983,13 +1031,10 @@
 ;; window opens.
 ;;
 ;; That last one is what stops a bind nobody could ever stake, and it is the
-;; *window* it is measured against rather than the start. Leaving the notice to
-;; expire somewhere inside the window looks like it would do -- `stake` only
-;; wants the notice over and the bond not yet started -- but a bond period
-;; begins on a reward cycle boundary, and pox-5 refuses to register inside that
-;; cycle's prepare phase. A notice ending in those last blocks is a bind that
-;; holds the slot and can never be used. BIND_NOTICE + STAKE_WINDOW clears the
-;; prepare phase with the whole window to spare.
+;; *window* it is measured against rather than the start: a notice that expires
+;; after the window has closed is a bind that holds the slot and can never be
+;; used. The window itself stops short of the prepare phase, so clearing it is
+;; enough -- see `stake-window-end-of`.
 (define-read-only (bindable-bond (index uint))
   (let (
       (start (contract-call? 'ST000000000000000000002AMW42H.pox-5
@@ -1043,7 +1088,7 @@
       ;; The first start height whose stake window opens late enough for the
       ;; notice to run out first -- the same rule `bindable-bond` applies, as
       ;; an index rather than a test.
-      (deadline (+ burn-block-height BIND_NOTICE STAKE_WINDOW))
+      (deadline (+ burn-block-height BIND_NOTICE STAKE_WINDOW (get-prepare-length)))
       (by-clock (if (<= deadline first)
         u0
         (ceil-div (- deadline first) spacing)
@@ -1347,10 +1392,10 @@
     ;; Nothing at all fits: the pool holds no usable STX for this bond.
     (asserts! (> sats u0) ERR_INSUFFICIENT_STX)
     (asserts! (>= burn-block-height (stake-window-start)) ERR_TOO_EARLY)
-    (asserts! (< burn-block-height (var-get pending-start-height)) ERR_TOO_LATE)
+    (asserts! (< burn-block-height (stake-window-end)) ERR_TOO_LATE)
     ;; The members' notice on this bond has to have run out too, so nobody is
     ;; carried into terms they had no chance to read and leave over. Checked
-    ;; after the window so a bond that has simply started reads as TOO_LATE.
+    ;; after the window so a bond whose window has closed reads as TOO_LATE.
     (asserts! (>= burn-block-height (+ (var-get bound-at-height) BIND_NOTICE))
       ERR_TOO_EARLY
     )
@@ -1447,10 +1492,15 @@
 ;; Wind the pool down for good: pull the pooled sBTC back out of pox-5 and
 ;; release every position. Permissionless once the live bond's 12 cycles have
 ;; run, which is also when the pooled STX unlocks.
+;;
+;; There may be nothing left to pull: every member can have taken their sats
+;; out early, leaving only the STX leg. pox-5 is skipped then, since a zero-sat
+;; withdrawal reaches an sBTC transfer of zero, which the token refuses.
 (define-public (unstake-sbtc (manager <signer-manager-trait>))
   (let (
       (live (unwrap! (get-live-epoch) ERR_NOT_STAKED))
       (sats (var-get bonded-sats))
+      (ustx (var-get bonded-ustx))
     )
     (asserts! (not (var-get finished)) ERR_ALREADY_UNSTAKED)
     (asserts! (is-eq (contract-of manager) (var-get signer-manager))
@@ -1461,31 +1511,41 @@
     (var-set finished true)
     (var-set bond-bound false)
     (var-set released-sats (+ (var-get released-sats) sats))
-    (var-set released-ustx (+ (var-get released-ustx) (var-get bonded-ustx)))
+    (var-set released-ustx (+ (var-get released-ustx) ustx))
     (var-set bonded-sats u0)
     (var-set bonded-ustx u0)
     (var-set exiting-sats u0)
     (var-set exiting-ustx u0)
 
-    (let ((result (try! (as-contract?
-        ;; pox-5 returns the sBTC to the staker and the pooled STX comes out
-        ;; of its lock, which is a PoX state change. The sBTC goes straight
-        ;; back to the treasury, so that what this contract holds is rewards
-        ;; and nothing else.
-        (
-          (with-ft 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
-          "sbtc-token" sats
-        )
-          (with-pox)
-        )
-        (let ((unstaked (try! (contract-call? 'ST000000000000000000002AMW42H.pox-5 unstake-sbtc
-            manager sats
-          ))))
-          (try! (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
-            transfer sats tx-sender .bond-treasury none
-          ))
-          unstaked
-        )))))
+    (let (
+        (pox (if (> sats u0)
+          (some (try! (as-contract?
+            ;; pox-5 returns the sBTC to the staker and the pooled STX comes
+            ;; out of its lock, which is a PoX state change. The sBTC goes
+            ;; straight back to the treasury, so that what this contract holds
+            ;; is rewards and nothing else.
+            (
+              (with-ft 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
+              "sbtc-token" sats
+            )
+              (with-pox)
+            )
+            (let ((unstaked (try! (contract-call? 'ST000000000000000000002AMW42H.pox-5 unstake-sbtc
+                manager sats
+              ))))
+              (try! (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
+                transfer sats tx-sender .bond-treasury none
+              ))
+              unstaked
+            ))))
+          none
+        ))
+        (result {
+          sats: sats,
+          ustx: ustx,
+          pox: pox,
+        })
+      )
       (print (merge { topic: "unstake-sbtc" } result))
       (ok result)
     )
@@ -2403,11 +2463,12 @@
                 PRECISION
               ))
           ),
-          ;; Only ever one stash: an epoch settles a cycle into the next one,
-          ;; and the roll after that is twelve cycles further on. Overwriting
-          ;; one is therefore unreachable, and if it ever did happen it would
-          ;; cost that member the rest of the older epoch's tail rather than
-          ;; letting their position drift out of step with the pool.
+          ;; Only ever one stash: an epoch settles half a cycle into the next
+          ;; one, and the roll after that is twelve cycles further on.
+          ;; Overwriting one is therefore unreachable, and if it ever did
+          ;; happen it would cost that member the rest of the older epoch's
+          ;; tail rather than letting their position drift out of step with
+          ;; the pool.
           tail-epoch: (if defer
             (some epoch)
             none
@@ -2620,10 +2681,10 @@
     (bips uint)
     (blocks-ahead uint)
   )
-  ;; Far enough out that BIND_NOTICE (576) runs out before the stake window
-  ;; opens at start - 288. Bound any nearer and the notice outlasts the bond's
-  ;; start, which is exactly the trap `bind-next-bond` warns about -- and had
-  ;; been silently stopping this harness from ever opening an epoch.
+  ;; Far enough out that BIND_NOTICE (576) runs out well before the stake
+  ;; window closes. Bound any nearer and the notice outlasts the window, which
+  ;; is exactly the trap `bind-next-bond` warns about -- and had been silently
+  ;; stopping this harness from ever opening an epoch.
   (let ((start (+ burn-block-height u900 (mod blocks-ahead u400))))
     (asserts! (not (var-get finished)) ERR_ALREADY_UNSTAKED)
     ;; Same rule as `bind-next-bond`: a bond whose window closed unstaked can be
@@ -2674,7 +2735,7 @@
     (asserts! (> eligible u0) ERR_NOTHING_DEPOSITED)
     (asserts! (> sats u0) ERR_INSUFFICIENT_STX)
     (asserts! (>= burn-block-height (stake-window-start)) ERR_TOO_EARLY)
-    (asserts! (< burn-block-height (var-get pending-start-height)) ERR_TOO_LATE)
+    (asserts! (< burn-block-height (stake-window-end)) ERR_TOO_LATE)
     (asserts! (>= burn-block-height (+ (var-get bound-at-height) BIND_NOTICE))
       ERR_TOO_EARLY
     )

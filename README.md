@@ -84,21 +84,22 @@ the *net difference* in sBTC and resizes the STX lock in place. A roll adds the
 queued deposits, releases the members who asked to leave, and carries the rest
 across untouched.
 
-Rewards arrive as a bare sBTC transfer, and pox-5 settles a reward cycle only
-once it has ended, so a bond's final cycle pays out *after* the roll that
-replaced it. The pool therefore runs two clocks:
+Rewards arrive as a bare sBTC transfer. pox-5 pays out twice per reward cycle,
+and each payout covers the cycle that has just ended, so a bond's final cycle
+pays out *after* the roll that replaced it. The pool therefore runs two clocks:
 
 - **positions** move when the pool rolls, so a member's record never describes a
   position the pool has already moved on from;
-- **rewards** move when an epoch settles — a cycle into the next bond — so the
-  bond a member was actually in is the one that pays them.
+- **rewards** move when an epoch settles — half a cycle into the next bond, the
+  last moment its own money can still arrive — so the bond a member was actually
+  in is the one that pays them.
 
 The gap is bridged by a *stash*: when the roll carries a member out of an epoch
 that is still paying, their claim on it is set aside and keeps drawing down
 until that epoch settles. A member who leaves at the roll gets their principal
 back immediately *and* their share of the bond's final cycle when it arrives.
-There is only ever one stash to hold — an epoch settles a cycle into the next
-one, and the roll after that is a whole bond term further on.
+There is only ever one stash to hold — an epoch settles half a cycle into the
+next one, and the roll after that is a whole bond term further on.
 
 ## Lifecycle
 
@@ -114,7 +115,7 @@ one, and the roll after that is a whole bond term further on.
 | `bond-bridge.complete-btc-deposit` | anyone | once the sBTC signers have swept it |
 | `bond-bridge.claim-principal-to-btc` | a member | to take released principal out as bitcoin |
 | `withdraw` | a depositor | until their deposit is staked |
-| `stake` | **permissionless** | 288 burn blocks before the bound bond starts. First call opens epoch 0, later calls roll |
+| `stake` | **permissionless** | a 288-burn-block window, closing where the prepare phase before the bound bond opens. First call opens epoch 0, later calls roll |
 | `request-exit` / `cancel-exit` | a member | released at the next roll |
 | `unstake-sbtc-early` | a member | committed sBTC back now, at a cost — see [Leaving before the term is up](#leaving-before-the-term-is-up) |
 | `unstake-sbtc` | **permissionless** | once the live bond's 12 cycles are up. Winds the pool down |
@@ -143,13 +144,19 @@ them before the fact:
 - **Rewards the pool has not recognised yet are forfeited.** sBTC is split by
   shares at the moment `sync-rewards` recognises it, and the shares are gone the
   moment the call returns. `sync-rewards` is permissionless, so calling it first
-  banks everything that has actually arrived.
+  banks everything that has actually arrived. Only the live epoch's shares are
+  at stake: while a previous epoch is still the one taking rewards, the member's
+  claim on it is a stash, which leaving the live bond does not touch.
 - **The rest of the bond is forfeited outright**, because pox-5 drops the
   unstaked sats from the current reward cycle as well as every later one.
 
 Nobody else pays for it: the pool's reward stream shrinks by exactly the shares
 that left, and the remaining members' slice of what still arrives grows to
 match. No member is diluted by someone else's exit, and none subsidises one.
+
+Everyone can leave this way, which empties the bond without ending it. The
+wind-down at the unlock height then has no sBTC to pull back out of pox-5, so it
+skips pox-5 and releases the STX leg on its own.
 
 ## A roll that does not fit
 
@@ -452,14 +459,17 @@ manager that stops signing.
 so nobody is carried into terms they had no chance to read and exit over.
 
 Binding late is no longer a way to lose a bond. The walk refuses a period
-unless the whole notice runs out **before the stake window opens** —
-`BIND_NOTICE + STAKE_WINDOW`, 864 blocks — rather than merely before the bond
-starts. The looser rule reads as though it would do, since `stake` only wants
-the notice over and the bond not yet begun, but a bond period starts on a
-reward cycle boundary and pox-5 refuses to register inside that cycle's prepare
-phase. A notice expiring in those last blocks is a bind that holds the slot and
-can never be used. So a bond too near its start is passed over instead, and the
-next one along is taken.
+unless the whole notice runs out **before the stake window opens** — rather
+than merely before the bond starts. A notice expiring after the window has
+closed is a bind that holds the slot and can never be used, so a bond too near
+its start is passed over instead, and the next one along is taken.
+
+The window itself stops short of the bond, too. A bond period begins on a
+reward cycle boundary, and pox-5 refuses to register a staker inside that
+cycle's prepare phase — so the window closes where the prepare phase opens
+rather than at the start, and every block of it is one the roll can actually be
+made in. A call after that reads as the pool's own `ERR_TOO_LATE` instead of
+burning a fee on a pox-5 error code.
 
 ### The manager gets control mid-roll
 
