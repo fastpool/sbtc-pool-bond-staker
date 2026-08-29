@@ -118,12 +118,13 @@
 ;; Which epoch a reward belongs to
 ;;
 ;; Rewards arrive as a bare sBTC transfer, carrying no record of the cycle they
-;; are for, so the pool dates them by the clock. pox-5 settles a reward cycle
-;; only once that cycle has ended, so a bond's final cycle pays out *after* the
-;; roll that replaced it: an epoch keeps taking rewards until the epoch after it
-;; has a full reward cycle behind it, and `sync-rewards` credits the oldest
-;; epoch still paying. At most two are, and the latest never settles, so a late
-;; payment is never stranded.
+;; are for, so the pool dates them by the clock. pox-5 pays out twice per reward
+;; cycle, and each payout covers the cycle that has just ended -- so a bond's
+;; final cycle pays out at the *start* of the cycle the roll moved on to, and
+;; that cycle's own first payout comes half a cycle later. An epoch therefore
+;; keeps taking rewards until the midpoint of the next epoch's first cycle, and
+;; `sync-rewards` credits the oldest epoch still paying. At most two are, and
+;; the latest never settles, so a late payment is never stranded.
 ;;
 ;; Two clocks, then, and they are deliberately not the same one:
 ;;
@@ -138,8 +139,8 @@
 ;; member out of an epoch that is still paying, their claim on it -- the shares
 ;; they held and the point they had drawn it down to -- is set aside, and
 ;; `accrue-stash` keeps drawing it until that epoch settles. Only ever one
-;; stash: an epoch settles a cycle into the next one, and the roll after that
-;; is a bond term further on.
+;; stash: an epoch settles half a cycle into the next one, and the roll after
+;; that is a bond term further on.
 ;;
 ;; The STX/sBTC split
 ;;
@@ -754,24 +755,26 @@
   (is-some (map-get? epochs (+ epoch u1)))
 )
 
-;; Rewards run on a slower clock. pox-5 settles a reward cycle only once that
-;; cycle has ended, so a bond's final cycle pays out *after* the roll that
-;; replaced it -- an epoch therefore keeps taking rewards until the epoch after
-;; it has a full reward cycle behind it. The latest epoch never settles, so a
-;; late payment is never stranded.
+;; Rewards run on a slower clock. pox-5 pays out twice per reward cycle, each
+;; payout covering the cycle that has just ended -- so a bond's final cycle
+;; pays out at the start of the cycle the roll moved on to, and that cycle's
+;; own first payout comes half a cycle later. An epoch therefore keeps taking
+;; rewards until the midpoint of the next epoch's first cycle. The latest
+;; epoch never settles, so a late payment is never stranded.
 (define-read-only (is-epoch-settled (epoch uint))
   (match (map-get? epochs (+ epoch u1))
     next (>= burn-block-height
       (contract-call? 'ST000000000000000000002AMW42H.pox-5
-        reward-cycle-to-burn-height (+ (get first-reward-cycle next) u1)
+        distribution-cycle-to-burn-height
+        (+ (* (get first-reward-cycle next) u2) u1)
       ))
     false
   )
 )
 
 ;; The epoch `sync-rewards` credits: the oldest one still taking rewards. At
-;; most two are, since an epoch settles one cycle into the next and a bond runs
-;; for twelve.
+;; most two are, since an epoch settles half a cycle into the next and a bond
+;; runs for twelve.
 (define-read-only (get-reward-epoch)
   (let ((count (var-get epoch-count)))
     (if (is-eq count u0)
@@ -2403,11 +2406,12 @@
                 PRECISION
               ))
           ),
-          ;; Only ever one stash: an epoch settles a cycle into the next one,
-          ;; and the roll after that is twelve cycles further on. Overwriting
-          ;; one is therefore unreachable, and if it ever did happen it would
-          ;; cost that member the rest of the older epoch's tail rather than
-          ;; letting their position drift out of step with the pool.
+          ;; Only ever one stash: an epoch settles half a cycle into the next
+          ;; one, and the roll after that is twelve cycles further on.
+          ;; Overwriting one is therefore unreachable, and if it ever did
+          ;; happen it would cost that member the rest of the older epoch's
+          ;; tail rather than letting their position drift out of step with
+          ;; the pool.
           tail-epoch: (if defer
             (some epoch)
             none

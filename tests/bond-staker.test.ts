@@ -105,6 +105,16 @@ function rollInto(index = NEXT_BOND_INDEX, allowanceSats = ALLOWANCE_SATS) {
   return stake();
 }
 
+/** The start of an epoch's first reward cycle. */
+const firstCycleStart = (index: number) =>
+  readPoxNum("reward-cycle-to-burn-height", [
+    Cl.uint(Number(epoch(index)["first-reward-cycle"])),
+  ]);
+
+/** Half a cycle on: where pox-5 makes that cycle's first payout. */
+const firstCycleMidpoint = (index: number) =>
+  firstCycleStart(index) + CYCLE_LENGTH / 2;
+
 describe("bond-staker: initialization and binding", () => {
   it("rejects deposits before a bond is bound", () => {
     expect(deposit(alice, ALICE_SATS)).toBeErr(Cl.uint(118)); // NO_BOND_BOUND
@@ -670,11 +680,7 @@ describe("bond-staker: per-bond reward accounting", () => {
     expect(claimableRewards(carol)).toBe(0);
 
     // once epoch 0 has settled, everything lands in epoch 1
-    advanceToBurnHeight(
-      readPoxNum("reward-cycle-to-burn-height", [
-        Cl.uint(Number(epoch(1)["first-reward-cycle"]) + 1),
-      ]),
-    );
+    advanceToBurnHeight(firstCycleMidpoint(1));
     expect(rewardEpoch()).toBe(1);
     const second = 2_000_000;
     payRewards(dave, second);
@@ -686,6 +692,36 @@ describe("bond-staker: per-bond reward accounting", () => {
     expect(claimableRewards(alice)).toBe((tail * ALICE_SATS) / POOL_SATS);
     expect(Number(epoch(0)["credited"])).toBe(4_000_000 + tail);
     expect(Number(epoch(1)["credited"])).toBe(second);
+  });
+
+  // pox-5 pays out twice per reward cycle, and each payout covers the cycle
+  // the block before it belonged to. So the payout at the start of epoch 1's
+  // first cycle is epoch 0's last, and the one half a cycle later is epoch 1's
+  // first -- which must not be split by epoch 0's shares.
+  it("hands the successor bond its first half-cycle payout", () => {
+    // bob leaves at the roll and carol takes his place
+    requestExit(bob);
+    setupBond(NEXT_BOND_INDEX);
+    bindNextBond();
+    deposit(carol, BOB_SATS);
+    advanceToBurnHeight(bondStartHeight(NEXT_BOND_INDEX) - 288);
+    expect(stake().type).toBe("ok");
+
+    // epoch 0's final cycle still pays out at the cycle boundary itself
+    advanceToBurnHeight(firstCycleStart(1));
+    expect(rewardEpoch()).toBe(0);
+
+    advanceToBurnHeight(firstCycleMidpoint(1));
+    expect(rewardEpoch()).toBe(1);
+
+    const pot = 8_000_000;
+    payRewards(dave, pot);
+    expect(Number(plain(syncRewards() as any).epoch)).toBe(1);
+
+    expect(claimableRewards(alice)).toBe((pot * ALICE_SATS) / POOL_SATS);
+    expect(claimableRewards(carol)).toBe((pot * BOB_SATS) / POOL_SATS);
+    // bob holds no epoch-1 shares, and epoch 0 has nothing left to give him
+    expect(claimableRewards(bob)).toBe(0);
   });
 
   it("hands a leaver their principal at the roll, and their last rewards after", () => {

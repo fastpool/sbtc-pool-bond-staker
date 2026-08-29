@@ -84,21 +84,22 @@ the *net difference* in sBTC and resizes the STX lock in place. A roll adds the
 queued deposits, releases the members who asked to leave, and carries the rest
 across untouched.
 
-Rewards arrive as a bare sBTC transfer, and pox-5 settles a reward cycle only
-once it has ended, so a bond's final cycle pays out *after* the roll that
-replaced it. The pool therefore runs two clocks:
+Rewards arrive as a bare sBTC transfer. pox-5 pays out twice per reward cycle,
+and each payout covers the cycle that has just ended, so a bond's final cycle
+pays out *after* the roll that replaced it. The pool therefore runs two clocks:
 
 - **positions** move when the pool rolls, so a member's record never describes a
   position the pool has already moved on from;
-- **rewards** move when an epoch settles — a cycle into the next bond — so the
-  bond a member was actually in is the one that pays them.
+- **rewards** move when an epoch settles — half a cycle into the next bond, the
+  last moment its own money can still arrive — so the bond a member was actually
+  in is the one that pays them.
 
 The gap is bridged by a *stash*: when the roll carries a member out of an epoch
 that is still paying, their claim on it is set aside and keeps drawing down
 until that epoch settles. A member who leaves at the roll gets their principal
 back immediately *and* their share of the bond's final cycle when it arrives.
-There is only ever one stash to hold — an epoch settles a cycle into the next
-one, and the roll after that is a whole bond term further on.
+There is only ever one stash to hold — an epoch settles half a cycle into the
+next one, and the roll after that is a whole bond term further on.
 
 ## Lifecycle
 
@@ -114,7 +115,7 @@ one, and the roll after that is a whole bond term further on.
 | `bond-bridge.complete-btc-deposit` | anyone | once the sBTC signers have swept it |
 | `bond-bridge.claim-principal-to-btc` | a member | to take released principal out as bitcoin |
 | `withdraw` | a depositor | until their deposit is staked |
-| `stake` | **permissionless** | 288 burn blocks before the bound bond starts. First call opens epoch 0, later calls roll |
+| `stake` | **permissionless** | a 288-burn-block window, closing where the prepare phase before the bound bond opens. First call opens epoch 0, later calls roll |
 | `request-exit` / `cancel-exit` | a member | released at the next roll |
 | `unstake-sbtc-early` | a member | committed sBTC back now, at a cost — see [Leaving before the term is up](#leaving-before-the-term-is-up) |
 | `unstake-sbtc` | **permissionless** | once the live bond's 12 cycles are up. Winds the pool down |
