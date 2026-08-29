@@ -152,6 +152,10 @@ Nobody else pays for it: the pool's reward stream shrinks by exactly the shares
 that left, and the remaining members' slice of what still arrives grows to
 match. No member is diluted by someone else's exit, and none subsidises one.
 
+Everyone can leave this way, which empties the bond without ending it. The
+wind-down at the unlock height then has no sBTC to pull back out of pox-5, so it
+skips pox-5 and releases the STX leg on its own.
+
 ## A roll that does not fit
 
 Two things can make a bond too small for everything queued up for it: the

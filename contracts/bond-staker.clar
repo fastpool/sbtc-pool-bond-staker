@@ -1450,10 +1450,15 @@
 ;; Wind the pool down for good: pull the pooled sBTC back out of pox-5 and
 ;; release every position. Permissionless once the live bond's 12 cycles have
 ;; run, which is also when the pooled STX unlocks.
+;;
+;; There may be nothing left to pull: every member can have taken their sats
+;; out early, leaving only the STX leg. pox-5 is skipped then, since a zero-sat
+;; withdrawal reaches an sBTC transfer of zero, which the token refuses.
 (define-public (unstake-sbtc (manager <signer-manager-trait>))
   (let (
       (live (unwrap! (get-live-epoch) ERR_NOT_STAKED))
       (sats (var-get bonded-sats))
+      (ustx (var-get bonded-ustx))
     )
     (asserts! (not (var-get finished)) ERR_ALREADY_UNSTAKED)
     (asserts! (is-eq (contract-of manager) (var-get signer-manager))
@@ -1464,31 +1469,41 @@
     (var-set finished true)
     (var-set bond-bound false)
     (var-set released-sats (+ (var-get released-sats) sats))
-    (var-set released-ustx (+ (var-get released-ustx) (var-get bonded-ustx)))
+    (var-set released-ustx (+ (var-get released-ustx) ustx))
     (var-set bonded-sats u0)
     (var-set bonded-ustx u0)
     (var-set exiting-sats u0)
     (var-set exiting-ustx u0)
 
-    (let ((result (try! (as-contract?
-        ;; pox-5 returns the sBTC to the staker and the pooled STX comes out
-        ;; of its lock, which is a PoX state change. The sBTC goes straight
-        ;; back to the treasury, so that what this contract holds is rewards
-        ;; and nothing else.
-        (
-          (with-ft 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
-          "sbtc-token" sats
-        )
-          (with-pox)
-        )
-        (let ((unstaked (try! (contract-call? 'ST000000000000000000002AMW42H.pox-5 unstake-sbtc
-            manager sats
-          ))))
-          (try! (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
-            transfer sats tx-sender .bond-treasury none
-          ))
-          unstaked
-        )))))
+    (let (
+        (pox (if (> sats u0)
+          (some (try! (as-contract?
+            ;; pox-5 returns the sBTC to the staker and the pooled STX comes
+            ;; out of its lock, which is a PoX state change. The sBTC goes
+            ;; straight back to the treasury, so that what this contract holds
+            ;; is rewards and nothing else.
+            (
+              (with-ft 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
+              "sbtc-token" sats
+            )
+              (with-pox)
+            )
+            (let ((unstaked (try! (contract-call? 'ST000000000000000000002AMW42H.pox-5 unstake-sbtc
+                manager sats
+              ))))
+              (try! (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
+                transfer sats tx-sender .bond-treasury none
+              ))
+              unstaked
+            ))))
+          none
+        ))
+        (result {
+          sats: sats,
+          ustx: ustx,
+          pox: pox,
+        })
+      )
       (print (merge { topic: "unstake-sbtc" } result))
       (ok result)
     )
