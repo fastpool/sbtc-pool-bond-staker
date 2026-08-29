@@ -144,7 +144,9 @@ them before the fact:
 - **Rewards the pool has not recognised yet are forfeited.** sBTC is split by
   shares at the moment `sync-rewards` recognises it, and the shares are gone the
   moment the call returns. `sync-rewards` is permissionless, so calling it first
-  banks everything that has actually arrived.
+  banks everything that has actually arrived. Only the live epoch's shares are
+  at stake: while a previous epoch is still the one taking rewards, the member's
+  claim on it is a stash, which leaving the live bond does not touch.
 - **The rest of the bond is forfeited outright**, because pox-5 drops the
   unstaked sats from the current reward cycle as well as every later one.
 

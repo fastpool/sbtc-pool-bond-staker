@@ -919,14 +919,25 @@
 ;;   ustx-at-roll     the STX leg, which the roll releases rather than this
 ;;   banked-rewards   what they have already accrued, which they keep
 ;;   at-risk-rewards  reward sBTC the pool is holding but has not recognised
-;;                    yet, at their current weight -- forfeited unless
-;;                    `sync-rewards` is called first, which anyone may do
+;;                    yet, at their live-epoch weight -- forfeited unless
+;;                    `sync-rewards` is called first, which anyone may do.
+;;                    Zero while an earlier epoch is still the one taking
+;;                    rewards: the claim on that one is a stash, and leaving
+;;                    the live epoch does not disturb it.
 (define-read-only (get-early-unstake-preview (member principal))
   (match (map-get? members member)
     stored (let (
         (record (settle stored))
-        (live-shares (match (get-live-epoch)
-          live (get total-shares live)
+        (at-risk (match (get-live-epoch)
+          live (let ((live-shares (get total-shares live)))
+            (if (and
+                (is-eq (get-reward-epoch) (some (- (var-get epoch-count) u1)))
+                (> live-shares u0)
+              )
+              (/ (* (get-unrecognized-rewards) (get shares record)) live-shares)
+              u0
+            )
+          )
           u0
         ))
       )
@@ -934,10 +945,7 @@
         sats: (get bonded-sats record),
         ustx-at-roll: (get bonded-ustx record),
         banked-rewards: (get pending record),
-        at-risk-rewards: (if (> live-shares u0)
-          (/ (* (get-unrecognized-rewards) (get shares record)) live-shares)
-          u0
-        ),
+        at-risk-rewards: at-risk,
       }
     )
     {
