@@ -63,8 +63,12 @@ import {
   setupBond,
   settledMember,
   settleMember,
+  PREPARE_LENGTH,
   stake,
   stakePreview,
+  STAKE_WINDOW,
+  stakeWindowEnd,
+  stakeWindowStart,
   stxBalance,
   STX_VALUE_RATIO,
   syncRewards,
@@ -157,8 +161,9 @@ describe("bond-staker: initialization and binding", () => {
     expect(Number(bond["start-height"])).toBe(bondStart);
     // 12 cycles after the bond starts
     expect(Number(bond["unlock-burn-height"])).toBe(bondStart + 12 * CYCLE_LENGTH);
-    // the stake window opens 288 burn blocks before the bond starts
-    expect(Number(bond["stake-opens-at"])).toBe(bondStart - 288);
+    // the window closes where the prepare phase opens, and runs 288 blocks back
+    expect(Number(bond["stake-closes-at"])).toBe(stakeWindowEnd(BOND_INDEX));
+    expect(Number(bond["stake-opens-at"])).toBe(stakeWindowStart(BOND_INDEX));
 
     expect(bindNextBond()).toBeErr(Cl.uint(119)); // BOND_ALREADY_BOUND
   });
@@ -286,15 +291,25 @@ describe("bond-staker: staking the first bond", () => {
     deposit(bob, BOB_SATS);
   });
 
-  it("is closed until 288 burn blocks before the bond starts", () => {
+  it("is closed until the window opens", () => {
     expect(stake()).toBeErr(Cl.uint(108)); // TOO_EARLY
-    advanceToBurnHeight(bondStart - 289);
+    advanceToBurnHeight(stakeWindowStart(BOND_INDEX) - 1);
     expect(stake()).toBeErr(Cl.uint(108));
   });
 
-  it("is closed once the bond has started", () => {
-    advanceToBurnHeight(bondStart);
+  // pox-5 will not register a staker inside the prepare phase before the bond,
+  // so the window closes there rather than at the start: a late call reads as
+  // the pool's own TOO_LATE instead of burning a fee on a pox-5 error.
+  it("is open to the last block before the prepare phase", () => {
+    advanceToBurnHeight(stakeWindowEnd(BOND_INDEX) - 1);
+    expect(stake().type).toBe("ok");
+  });
+
+  it("is too late from the prepare phase on", () => {
+    advanceToBurnHeight(stakeWindowEnd(BOND_INDEX));
     expect(stake()).toBeErr(Cl.uint(109)); // TOO_LATE
+    advanceToBurnHeight(bondStart);
+    expect(stake()).toBeErr(Cl.uint(109));
   });
 
   it("only accepts the signer manager the pool was bound to", () => {
@@ -1176,8 +1191,11 @@ describe("bond-staker: a missed bond", () => {
     const { bondStart } = bootstrap();
     deposit(alice, ALICE_SATS);
 
-    // the window comes and goes with nobody calling `stake`
-    advanceToBurnHeight(bondStart + 1);
+    // the window comes and goes with nobody calling `stake`. The slot frees up
+    // as soon as it closes -- there is no waiting out the prepare phase for a
+    // bond that can no longer be staked.
+    advanceToBurnHeight(stakeWindowEnd(BOND_INDEX));
+    expect(bondStart).toBeGreaterThan(simnet.burnBlockHeight);
     expect(stake()).toBeErr(Cl.uint(109)); // TOO_LATE
     expect(boundBond().stakeable).toBe(false);
 
@@ -1365,8 +1383,8 @@ describe("bond-staker: the ledger's bridge hooks", () => {
 
 describe("bond-staker: notice on a bound bond", () => {
   // The notice has to be over before the stake window opens, so the last
-  // moment a bond can be bound is BIND_NOTICE + STAKE_WINDOW before its start.
-  const LAST_BIND = 576 + 288;
+  // moment a bond can be bound is BIND_NOTICE ahead of that.
+  const LAST_BIND = 576 + STAKE_WINDOW + PREPARE_LENGTH;
 
   it("will not take a bond it cannot give the members notice on", () => {
     registerSignerManager();
@@ -1393,15 +1411,17 @@ describe("bond-staker: notice on a bound bond", () => {
     // bound at the very last moment the rule allows
     advanceToBurnHeight(bondStart - LAST_BIND);
     expect(bindNextBond().type).toBe("ok");
-    expect(Number(boundBond()["notice-ends-at"])).toBe(bondStart - 288);
+    expect(Number(boundBond()["notice-ends-at"])).toBe(
+      stakeWindowStart(BOND_INDEX),
+    );
 
     deposit(alice, ALICE_SATS);
     // a block before the window, the notice is still running
-    advanceToBurnHeight(bondStart - 289);
+    advanceToBurnHeight(stakeWindowStart(BOND_INDEX) - 1);
     expect(stake()).toBeErr(Cl.uint(108)); // TOO_EARLY
 
     // and the window opens exactly as the notice ends
-    advanceToBurnHeight(bondStart - 288);
+    advanceToBurnHeight(stakeWindowStart(BOND_INDEX));
     expect(stake().type).toBe("ok");
   });
 });

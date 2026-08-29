@@ -71,6 +71,10 @@ export const BRIDGE = "bond-bridge";
 export const BOND_ADMIN = "ST000000000000000000002AMW42H";
 
 export const CYCLE_LENGTH = 1050;
+/** The last blocks of a cycle, in which pox-5 registers nobody. */
+export const PREPARE_LENGTH = 50;
+/** How long the pool's stake window runs, from `STAKE_WINDOW` in the pool. */
+export const STAKE_WINDOW = 288;
 
 /** The bond the pool starts on, and the one it rolls into. */
 export const BOND_INDEX = 2;
@@ -746,6 +750,15 @@ export const claimablePrincipal = (who: string) =>
   plain(readPool("get-claimable-principal", [Cl.principal(who)])) as any;
 export const earlyUnstakePreview = (who: string) =>
   plain(readPool("get-early-unstake-preview", [Cl.principal(who)])) as any;
+
+/**
+ * The stake window for the bond at `index`: it closes where the prepare phase
+ * before the bond starts opens, and runs STAKE_WINDOW blocks back from there.
+ */
+export const stakeWindowEnd = (index: number) =>
+  bondStartHeight(index) - PREPARE_LENGTH;
+export const stakeWindowStart = (index: number) =>
+  stakeWindowEnd(index) - STAKE_WINDOW;
 
 /** What pox-5 says it is holding for the pool. */
 export const custodiedSats = () =>

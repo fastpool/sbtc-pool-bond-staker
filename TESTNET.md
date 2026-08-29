@@ -101,11 +101,11 @@ That is roughly 140 blocks — call it a day — to publish four contracts,
 confirmed batches, so start early rather than at 8100.
 
 `bind-next-bond` will not take the "sliver" line at all. It refuses any period
-whose notice would run past the *opening* of the stake window — bind by
-`start - 864` or not at all — because a bond period begins on a reward cycle
-boundary and pox-5 refuses to register inside that cycle's prepare phase, so a
-notice ending in the last blocks before the start is a bind that can never be
-staked.
+whose notice would run past the *opening* of the stake window, and that window
+now closes where the prepare phase before the bond opens rather than at the
+start — pox-5 refuses to register a staker there. So the bind deadline is
+`BIND_NOTICE + STAKE_WINDOW + prepare-cycle-length` ahead of the start, and a
+notice ending any later is a bind that can never be staked.
 
 Missing it is not fatal, only slow: an unbound pool is inert and costs nothing
 to leave standing, and the next grant would be a request to whoever runs

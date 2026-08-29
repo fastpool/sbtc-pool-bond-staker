@@ -179,8 +179,9 @@
 ;;   deposit-stx   anyone, to raise the STX behind the pool's sats.
 ;;   withdraw      anyone, for their own queued deposit, until it is staked.
 ;;   stake         permissionless, inside a window of STAKE_WINDOW burn blocks
-;;                 before the bound bond starts. The first call opens epoch 0;
-;;                 every later call rolls the position into the next bond.
+;;                 ending where the prepare phase before the bound bond opens.
+;;                 The first call opens epoch 0; every later call rolls the
+;;                 position into the next bond.
 ;;   request-exit  a member, to be released at the next roll.
 ;;   unstake-sbtc-early
 ;;                 a member, for committed sBTC they want back now rather
@@ -254,9 +255,9 @@
 ;; a bond they had no chance to read the terms of and `request-exit` from.
 ;;
 ;; ~4 days. It has to fit inside the window pox-5 allows for `setup-bond` --
-;; two cycles before the bond starts -- with the STAKE_WINDOW still to come
-;; after it, which it does on both mainnet (2100-block cycles) and testnet
-;; (900).
+;; two cycles before the bond starts -- with the STAKE_WINDOW and the prepare
+;; phase it stops short of still to come after it, which it does on both
+;; mainnet (2100-block cycles, 100-block prepare) and testnet (900/50).
 (define-constant BIND_NOTICE u576)
 
 ;; How many bond periods ahead `bind-next-bond` looks for one this pool can
@@ -281,7 +282,10 @@
 ;; cap would be on the step and not on the distance.
 (define-constant MAX_SKIP u100)
 
-;; How long before the bond starts `stake` may be called, in burn blocks.
+;; How long the window in which `stake` may be called runs, in burn blocks. It
+;; closes where the prepare phase before the bond starts opens, not at the
+;; start itself -- see `stake-window-end-of`.
+;;
 ;; ~2 days: long enough to get the transaction mined, short enough that
 ;; deposits stay open for as long as possible. Comfortably inside pox-5's own
 ;; roll-over window, which opens half a reward cycle before the bond starts.
@@ -571,6 +575,7 @@
     start-height: (var-get pending-start-height),
     unlock-burn-height: (var-get pending-unlock-height),
     stake-opens-at: (stake-window-start),
+    stake-closes-at: (stake-window-end),
     stakeable: (can-still-stake),
     bound-at-height: (var-get bound-at-height),
     notice-ends-at: (+ (var-get bound-at-height) BIND_NOTICE),
@@ -725,11 +730,38 @@
   )
 )
 
-;; When the stake window opens for a bond starting at `start`.
+;; The last blocks of a reward cycle, in which pox-5 freezes the next cycle's
+;; staker set and will register nobody for a bond. Read from pox-5 rather than
+;; assumed: mainnet and testnet use different lengths.
+(define-read-only (get-prepare-length)
+  (get prepare-cycle-length
+    (unwrap-panic (contract-call? 'ST000000000000000000002AMW42H.pox-5 get-pox-info))
+  )
+)
+
+;; When the stake window closes for a bond starting at `start`.
+;;
+;; A bond period begins on a reward cycle boundary, so the blocks right before
+;; `start` are the previous cycle's prepare phase and pox-5 refuses to register
+;; there. The window stops at the prepare phase rather than at `start`, so that
+;; every block of it is one the roll can actually be made in.
+(define-read-only (stake-window-end-of (start uint))
+  (let ((prepare (get-prepare-length)))
+    (if (> start prepare)
+      (- start prepare)
+      u0
+    )
+  )
+)
+
+;; When the stake window opens for a bond starting at `start`: STAKE_WINDOW
+;; blocks before it closes.
 (define-read-only (stake-window-start-of (start uint))
-  (if (> start STAKE_WINDOW)
-    (- start STAKE_WINDOW)
-    u0
+  (let ((closes (stake-window-end-of start)))
+    (if (> closes STAKE_WINDOW)
+      (- closes STAKE_WINDOW)
+      u0
+    )
   )
 )
 
@@ -738,12 +770,17 @@
   (stake-window-start-of (var-get pending-start-height))
 )
 
-;; False once the bound bond has started without the pool: it can no longer be
-;; staked, and `bind-next-bond` may replace it.
+;; First burn height at which it is too late.
+(define-read-only (stake-window-end)
+  (stake-window-end-of (var-get pending-start-height))
+)
+
+;; False once the bound bond's window has closed without the pool: it can no
+;; longer be staked, and `bind-next-bond` may replace it.
 (define-read-only (can-still-stake)
   (and
     (var-get bond-bound)
-    (< burn-block-height (var-get pending-start-height))
+    (< burn-block-height (stake-window-end))
   )
 )
 
@@ -994,13 +1031,10 @@
 ;; window opens.
 ;;
 ;; That last one is what stops a bind nobody could ever stake, and it is the
-;; *window* it is measured against rather than the start. Leaving the notice to
-;; expire somewhere inside the window looks like it would do -- `stake` only
-;; wants the notice over and the bond not yet started -- but a bond period
-;; begins on a reward cycle boundary, and pox-5 refuses to register inside that
-;; cycle's prepare phase. A notice ending in those last blocks is a bind that
-;; holds the slot and can never be used. BIND_NOTICE + STAKE_WINDOW clears the
-;; prepare phase with the whole window to spare.
+;; *window* it is measured against rather than the start: a notice that expires
+;; after the window has closed is a bind that holds the slot and can never be
+;; used. The window itself stops short of the prepare phase, so clearing it is
+;; enough -- see `stake-window-end-of`.
 (define-read-only (bindable-bond (index uint))
   (let (
       (start (contract-call? 'ST000000000000000000002AMW42H.pox-5
@@ -1054,7 +1088,7 @@
       ;; The first start height whose stake window opens late enough for the
       ;; notice to run out first -- the same rule `bindable-bond` applies, as
       ;; an index rather than a test.
-      (deadline (+ burn-block-height BIND_NOTICE STAKE_WINDOW))
+      (deadline (+ burn-block-height BIND_NOTICE STAKE_WINDOW (get-prepare-length)))
       (by-clock (if (<= deadline first)
         u0
         (ceil-div (- deadline first) spacing)
@@ -1358,10 +1392,10 @@
     ;; Nothing at all fits: the pool holds no usable STX for this bond.
     (asserts! (> sats u0) ERR_INSUFFICIENT_STX)
     (asserts! (>= burn-block-height (stake-window-start)) ERR_TOO_EARLY)
-    (asserts! (< burn-block-height (var-get pending-start-height)) ERR_TOO_LATE)
+    (asserts! (< burn-block-height (stake-window-end)) ERR_TOO_LATE)
     ;; The members' notice on this bond has to have run out too, so nobody is
     ;; carried into terms they had no chance to read and leave over. Checked
-    ;; after the window so a bond that has simply started reads as TOO_LATE.
+    ;; after the window so a bond whose window has closed reads as TOO_LATE.
     (asserts! (>= burn-block-height (+ (var-get bound-at-height) BIND_NOTICE))
       ERR_TOO_EARLY
     )
@@ -2647,10 +2681,10 @@
     (bips uint)
     (blocks-ahead uint)
   )
-  ;; Far enough out that BIND_NOTICE (576) runs out before the stake window
-  ;; opens at start - 288. Bound any nearer and the notice outlasts the bond's
-  ;; start, which is exactly the trap `bind-next-bond` warns about -- and had
-  ;; been silently stopping this harness from ever opening an epoch.
+  ;; Far enough out that BIND_NOTICE (576) runs out well before the stake
+  ;; window closes. Bound any nearer and the notice outlasts the window, which
+  ;; is exactly the trap `bind-next-bond` warns about -- and had been silently
+  ;; stopping this harness from ever opening an epoch.
   (let ((start (+ burn-block-height u900 (mod blocks-ahead u400))))
     (asserts! (not (var-get finished)) ERR_ALREADY_UNSTAKED)
     ;; Same rule as `bind-next-bond`: a bond whose window closed unstaked can be
@@ -2701,7 +2735,7 @@
     (asserts! (> eligible u0) ERR_NOTHING_DEPOSITED)
     (asserts! (> sats u0) ERR_INSUFFICIENT_STX)
     (asserts! (>= burn-block-height (stake-window-start)) ERR_TOO_EARLY)
-    (asserts! (< burn-block-height (var-get pending-start-height)) ERR_TOO_LATE)
+    (asserts! (< burn-block-height (stake-window-end)) ERR_TOO_LATE)
     (asserts! (>= burn-block-height (+ (var-get bound-at-height) BIND_NOTICE))
       ERR_TOO_EARLY
     )

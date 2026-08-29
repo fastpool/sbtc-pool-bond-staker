@@ -459,14 +459,17 @@ manager that stops signing.
 so nobody is carried into terms they had no chance to read and exit over.
 
 Binding late is no longer a way to lose a bond. The walk refuses a period
-unless the whole notice runs out **before the stake window opens** —
-`BIND_NOTICE + STAKE_WINDOW`, 864 blocks — rather than merely before the bond
-starts. The looser rule reads as though it would do, since `stake` only wants
-the notice over and the bond not yet begun, but a bond period starts on a
-reward cycle boundary and pox-5 refuses to register inside that cycle's prepare
-phase. A notice expiring in those last blocks is a bind that holds the slot and
-can never be used. So a bond too near its start is passed over instead, and the
-next one along is taken.
+unless the whole notice runs out **before the stake window opens** — rather
+than merely before the bond starts. A notice expiring after the window has
+closed is a bind that holds the slot and can never be used, so a bond too near
+its start is passed over instead, and the next one along is taken.
+
+The window itself stops short of the bond, too. A bond period begins on a
+reward cycle boundary, and pox-5 refuses to register a staker inside that
+cycle's prepare phase — so the window closes where the prepare phase opens
+rather than at the start, and every block of it is one the roll can actually be
+made in. A call after that reads as the pool's own `ERR_TOO_LATE` instead of
+burning a fee on a pox-5 error code.
 
 ### The manager gets control mid-roll
 
