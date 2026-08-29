@@ -1,8 +1,8 @@
 # docs/
 
-Longer notes than a contract comment has room for. Two kinds, and the
-difference matters — one describes the contracts, the other describes roads not
-taken.
+Longer notes than a contract comment has room for. Three kinds, and the
+difference matters — one describes the contracts as they are, one describes work
+that is meant to happen, and one describes roads not taken.
 
 ## Reference
 
@@ -12,6 +12,15 @@ one disagrees with a contract, the contract is right and the note is stale.
 | note | about |
 | --- | --- |
 | [address-front-running.md](address-front-running.md) | Why `bond-bridge` commits before it reveals, why the wait is two bitcoin blocks, what it does and does not protect, and how BNS-V2's version of the same race differs |
+
+## Planned
+
+Designed and not built, but meant to be. Unlike the shelved notes, these are
+proposals someone is expected to act on or reject on the merits.
+
+| note | designed | what it would do |
+| --- | --- | --- |
+| [tagged-reward-claims.md](tagged-reward-claims.md) | 2026-08-29 | Attribute reward sBTC by the cycle it was earned in rather than the burn height it arrived at, closing the residual half of #2 |
 
 ## Shelved
 
