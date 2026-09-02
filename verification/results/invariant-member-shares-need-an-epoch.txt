@@ -1,0 +1,39 @@
+Inductive invariant check for SP000000000000000000002Q6VF78.bond-staker
+(does each mutator preserve each invariant?)
+decided by: simplifier + z3
+
+invariant-member-shares-need-an-epoch
+  UNFINISHED initialize  (gave up after 10s; raise --time-budget)
+  UNFINISHED set-next-bond  (gave up after 10s; raise --time-budget)
+  UNFINISHED bind-next-bond  (gave up after 10s; raise --time-budget)
+  UNFINISHED deposit  (gave up after 10s; raise --time-budget)
+  UNFINISHED deposit-stx  (gave up after 10s; raise --time-budget)
+  UNFINISHED withdraw  (gave up after 10s; raise --time-budget)
+  UNFINISHED stake  (gave up after 10s; raise --time-budget)
+  UNFINISHED unstake-sbtc  (gave up after 10s; raise --time-budget)
+  UNFINISHED update-bond-registration  (gave up after 10s; raise --time-budget)
+  UNFINISHED update-operator  (gave up after 10s; raise --time-budget)
+  UNFINISHED trust-signer-manager  (gave up after 10s; raise --time-budget)
+  UNFINISHED distrust-signer-manager  (gave up after 10s; raise --time-budget)
+  UNFINISHED request-exit  (gave up after 10s; raise --time-budget)
+  UNFINISHED cancel-exit  (gave up after 10s; raise --time-budget)
+  UNFINISHED unstake-sbtc-early  (gave up after 10s; raise --time-budget)
+  UNFINISHED sync-rewards  (gave up after 10s; raise --time-budget)
+  UNFINISHED claim-rewards  (gave up after 10s; raise --time-budget)
+  UNFINISHED claim-principal  (gave up after 10s; raise --time-budget)
+  UNFINISHED settle-member  (gave up after 10s; raise --time-budget)
+  UNFINISHED reserve-bridged-deposit  (gave up after 10s; raise --time-budget)
+  UNFINISHED abandon-bridged-deposit  (gave up after 10s; raise --time-budget)
+  UNFINISHED credit-bridged-deposit  (gave up after 10s; raise --time-budget)
+  UNFINISHED debit-released-for-bridge  (gave up after 10s; raise --time-budget)
+  UNFINISHED settle-bridge-withdrawal  (gave up after 10s; raise --time-budget)
+  UNFINISHED sweep-unattributed-principal  (gave up after 10s; raise --time-budget)
+  UNFINISHED harness-bind  (gave up after 10s; raise --time-budget)
+  UNFINISHED harness-lock  (gave up after 10s; raise --time-budget)
+  UNFINISHED harness-release  (gave up after 10s; raise --time-budget)
+  UNFINISHED harness-unstake-early  (gave up after 10s; raise --time-budget)
+  UNFINISHED harness-deposit  (gave up after 10s; raise --time-budget)
+  UNFINISHED harness-pay-rewards  (gave up after 10s; raise --time-budget)
+
+Summary: 0 holds (0 by solver), 0 violated, 31 not-proven, 0 skipped
+
