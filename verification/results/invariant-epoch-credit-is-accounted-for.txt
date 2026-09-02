@@ -1,0 +1,39 @@
+Inductive invariant check for SP000000000000000000002Q6VF78.bond-staker
+(does each mutator preserve each invariant?)
+decided by: simplifier + z3
+
+invariant-epoch-credit-is-accounted-for
+  HOLDS      initialize
+  UNFINISHED set-next-bond  (gave up after 10s; raise --time-budget)
+  UNFINISHED bind-next-bond  (gave up after 10s; raise --time-budget)
+  UNFINISHED deposit  (gave up after 10s; raise --time-budget)
+  UNFINISHED deposit-stx  (gave up after 10s; raise --time-budget)
+  UNFINISHED withdraw  (gave up after 10s; raise --time-budget)
+  UNFINISHED stake  (gave up after 10s; raise --time-budget)
+  HOLDS      unstake-sbtc
+  HOLDS      update-bond-registration
+  HOLDS      update-operator
+  HOLDS      trust-signer-manager
+  HOLDS      distrust-signer-manager
+  UNFINISHED request-exit  (gave up after 10s; raise --time-budget)
+  UNFINISHED cancel-exit  (gave up after 10s; raise --time-budget)
+  UNFINISHED unstake-sbtc-early  (gave up after 10s; raise --time-budget)
+  UNFINISHED sync-rewards  (gave up after 10s; raise --time-budget)
+  UNFINISHED claim-rewards  (gave up after 10s; raise --time-budget)
+  UNFINISHED claim-principal  (gave up after 10s; raise --time-budget)
+  UNFINISHED settle-member  (gave up after 10s; raise --time-budget)
+  UNFINISHED reserve-bridged-deposit  (gave up after 10s; raise --time-budget)
+  HOLDS      abandon-bridged-deposit
+  UNFINISHED credit-bridged-deposit  (gave up after 10s; raise --time-budget)
+  UNFINISHED debit-released-for-bridge  (gave up after 10s; raise --time-budget)
+  UNFINISHED settle-bridge-withdrawal  (gave up after 10s; raise --time-budget)
+  HOLDS      sweep-unattributed-principal
+  HOLDS      harness-bind
+  UNFINISHED harness-lock  (gave up after 10s; raise --time-budget)
+  HOLDS      harness-release
+  UNFINISHED harness-unstake-early  (gave up after 10s; raise --time-budget)
+  UNFINISHED harness-deposit  (gave up after 10s; raise --time-budget)
+  HOLDS      harness-pay-rewards
+
+Summary: 11 holds (0 by solver), 0 violated, 20 not-proven, 0 skipped
+
