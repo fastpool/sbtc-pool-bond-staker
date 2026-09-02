@@ -1,6 +1,7 @@
 Inductive invariant check for SP000000000000000000002Q6VF78.bond-staker
 (does each mutator preserve each invariant?)
 decided by: simplifier + z3
+assuming on entry: invariant-sbtc-covers-unpaid-rewards, invariant-no-principal-left-in-transit, invariant-treasury-covers-its-books, invariant-sweep-cannot-reach-principal, invariant-stx-covers-obligations, invariant-live-epoch-matches-the-pool, invariant-exits-fit-the-position, invariant-rewards-only-after-staking, invariant-paid-within-credited, invariant-finished-is-final, invariant-shares-never-exceed-the-roll, invariant-epoch-credit-is-accounted-for, invariant-member-shares-fit-the-epoch, invariant-member-rewards-fit-the-pool, invariant-member-principal-fits-the-pool, invariant-member-settled-within-the-pool, invariant-member-shares-need-an-epoch, invariant-signer-manager-is-a-contract
 
 invariant-sbtc-covers-unpaid-rewards
   HOLDS      initialize
@@ -9,7 +10,7 @@ invariant-sbtc-covers-unpaid-rewards
   HOLDS      deposit
   HOLDS      deposit-stx
   HOLDS      withdraw
-  NOT PROVEN stake  (solver: sat; fails when: (or (and (< (- (+ (loaded-var SP000000000000000000002Q6VF78.bond-staker.bonded-sats (bonded-sats uint)) (loaded-var SP000000000000000000002Q6VF78.bond-staker.qu... (--full-conditions for the rest))
+  NOT PROVEN stake  (solver: sat; fails when: (and (or (and (< (- (+ (loaded-var SP000000000000000000002Q6VF78.bond-staker.bonded-sats (bonded-sats uint)) (loaded-var SP000000000000000000002Q6VF78.bond-stak... (--full-conditions for the rest))
   HOLDS      unstake-sbtc
   HOLDS      update-bond-registration
   HOLDS      update-operator
@@ -38,4 +39,4 @@ invariant-sbtc-covers-unpaid-rewards
 Summary: 29 holds (3 by solver), 0 violated, 2 not-proven, 0 skipped
 
 Command exited with non-zero status 5
-(48.77s 1885204KB resident)
+(97.91s 1894300KB resident)

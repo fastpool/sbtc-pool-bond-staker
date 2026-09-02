@@ -1,6 +1,7 @@
 Inductive invariant check for SP000000000000000000002Q6VF78.bond-staker
 (does each mutator preserve each invariant?)
 decided by: simplifier + z3
+assuming on entry: invariant-sbtc-covers-unpaid-rewards, invariant-no-principal-left-in-transit, invariant-treasury-covers-its-books, invariant-sweep-cannot-reach-principal, invariant-stx-covers-obligations, invariant-live-epoch-matches-the-pool, invariant-exits-fit-the-position, invariant-rewards-only-after-staking, invariant-paid-within-credited, invariant-finished-is-final, invariant-shares-never-exceed-the-roll, invariant-epoch-credit-is-accounted-for, invariant-member-shares-fit-the-epoch, invariant-member-rewards-fit-the-pool, invariant-member-principal-fits-the-pool, invariant-member-settled-within-the-pool, invariant-member-shares-need-an-epoch, invariant-signer-manager-is-a-contract
 
 invariant-paid-within-credited
   HOLDS      initialize
@@ -19,7 +20,7 @@ invariant-paid-within-credited
   HOLDS      cancel-exit
   HOLDS      unstake-sbtc-early
   HOLDS      sync-rewards  (by solver)
-  NOT PROVEN claim-rewards  (solver: sat; fails when: (and (<= (loaded-var SP000000000000000000002Q6VF78.bond-staker.total-paid (total-paid uint)) (loaded-var SP000000000000000000002Q6VF78.bond-staker.total-credite... (--full-conditions for the rest))
+  NOT PROVEN claim-rewards  (solver: sat; fails when: (and (<= n5f9545230689afc66ab96960274a121e (unwrap-panic (map-entry SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token.balances SP000000000000000000002Q6VF78.... (--full-conditions for the rest))
   HOLDS      claim-principal
   HOLDS      settle-member
   HOLDS      reserve-bridged-deposit
@@ -38,4 +39,4 @@ invariant-paid-within-credited
 Summary: 30 holds (1 by solver), 0 violated, 1 not-proven, 0 skipped
 
 Command exited with non-zero status 5
-(46.07s 1885140KB resident)
+(87.23s 1893804KB resident)

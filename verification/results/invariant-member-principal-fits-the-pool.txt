@@ -3,37 +3,39 @@ Inductive invariant check for SP000000000000000000002Q6VF78.bond-staker
 decided by: simplifier + z3
 
 invariant-member-principal-fits-the-pool
-  UNFINISHED initialize  (gave up after 10s; raise --time-budget)
-  UNFINISHED set-next-bond  (gave up after 10s; raise --time-budget)
-  UNFINISHED bind-next-bond  (gave up after 10s; raise --time-budget)
-  UNFINISHED deposit  (gave up after 10s; raise --time-budget)
-  UNFINISHED deposit-stx  (gave up after 10s; raise --time-budget)
-  UNFINISHED withdraw  (gave up after 10s; raise --time-budget)
-  UNFINISHED stake  (gave up after 10s; raise --time-budget)
-  UNFINISHED unstake-sbtc  (gave up after 10s; raise --time-budget)
-  UNFINISHED update-bond-registration  (gave up after 10s; raise --time-budget)
-  UNFINISHED update-operator  (gave up after 10s; raise --time-budget)
-  UNFINISHED trust-signer-manager  (gave up after 10s; raise --time-budget)
-  UNFINISHED distrust-signer-manager  (gave up after 10s; raise --time-budget)
-  UNFINISHED request-exit  (gave up after 10s; raise --time-budget)
-  UNFINISHED cancel-exit  (gave up after 10s; raise --time-budget)
-  UNFINISHED unstake-sbtc-early  (gave up after 10s; raise --time-budget)
-  UNFINISHED sync-rewards  (gave up after 10s; raise --time-budget)
-  UNFINISHED claim-rewards  (gave up after 10s; raise --time-budget)
-  UNFINISHED claim-principal  (gave up after 10s; raise --time-budget)
-  UNFINISHED settle-member  (gave up after 10s; raise --time-budget)
-  UNFINISHED reserve-bridged-deposit  (gave up after 10s; raise --time-budget)
-  UNFINISHED abandon-bridged-deposit  (gave up after 10s; raise --time-budget)
-  UNFINISHED credit-bridged-deposit  (gave up after 10s; raise --time-budget)
-  UNFINISHED debit-released-for-bridge  (gave up after 10s; raise --time-budget)
-  UNFINISHED settle-bridge-withdrawal  (gave up after 10s; raise --time-budget)
-  UNFINISHED sweep-unattributed-principal  (gave up after 10s; raise --time-budget)
-  UNFINISHED harness-bind  (gave up after 10s; raise --time-budget)
-  UNFINISHED harness-lock  (gave up after 10s; raise --time-budget)
-  UNFINISHED harness-release  (gave up after 10s; raise --time-budget)
-  UNFINISHED harness-unstake-early  (gave up after 10s; raise --time-budget)
-  UNFINISHED harness-deposit  (gave up after 10s; raise --time-budget)
-  UNFINISHED harness-pay-rewards  (gave up after 10s; raise --time-budget)
+  HOLDS      initialize
+  HOLDS      set-next-bond
+  HOLDS      bind-next-bond
+  NOT PROVEN deposit  (solver: sat; fails when: (or (and (< (burn-block-height uint) (loaded-var SP000000000000000000002Q6VF78.bond-staker.pending-start-height (pending-start-height uint))) (<= (- (+ (loaded-... (--full-conditions for the rest))
+  HOLDS      deposit-stx  (by solver)
+  NOT PROVEN withdraw  (solver: sat; fails when: (or (and (<= n1babf44f7a04a73a572f356f3dda0b1e u0) (<= n852337d1a1363a4e5669398b38fb5493 (unwrap-panic (map-entry SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc... (--full-conditions for the rest))
+  NOT PROVEN stake  (solver: unknown; fails when: (or (and (< (- (+ (loaded-var SP000000000000000000002Q6VF78.bond-staker.bonded-sats (bonded-sats uint)) (loaded-var SP000000000000000000002Q6VF78.bond-staker.qu... (--full-conditions for the rest))
+  NOT PROVEN unstake-sbtc  (solver: sat; fails when: (or (and (<= (loaded-var SP000000000000000000002Q6VF78.bond-staker.bonded-sats (bonded-sats uint)) (+ (if (is-some (map-entry SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTS... (--full-conditions for the rest))
+  HOLDS      update-bond-registration
+  HOLDS      update-operator
+  HOLDS      trust-signer-manager
+  HOLDS      distrust-signer-manager
+  NOT PROVEN request-exit  (solver: sat; fails when: (or (and (<= (+ n3857802fa44e7ea2d3e8fb9142ce7bdb n569dd0588164330c40409bad0dbd46b2) u0) (<= n1babf44f7a04a73a572f356f3dda0b1e u0) (<= n852337d1a1363a4e5669398b... (--full-conditions for the rest))
+  HOLDS      cancel-exit
+  HOLDS      unstake-sbtc-early  (by solver)
+  HOLDS      sync-rewards
+  HOLDS      claim-rewards
+  NOT PROVEN claim-principal  (solver: sat; fails when: (or (and (<= (+ n0726a4b5b19cda22360906a447a8a961 nda3a05701dfad32084c090558a0ba2b5) (unwrap-panic (map-entry SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-tok... (--full-conditions for the rest))
+  HOLDS      settle-member
+  HOLDS      reserve-bridged-deposit
+  HOLDS      abandon-bridged-deposit
+  HOLDS      credit-bridged-deposit  (by solver)
+  NOT PROVEN debit-released-for-bridge  (solver: sat; fails when: (or (and (<= (+ n0726a4b5b19cda22360906a447a8a961 ndce4e96a7db5cde0dd7a1122345b6009) u0) (> nda3a05701dfad32084c090558a0ba2b5 (m1 uint)) (is-ok (SP0000000000000... (--full-conditions for the rest))
+  HOLDS      settle-bridge-withdrawal  (by solver)
+  HOLDS      sweep-unattributed-principal
+  HOLDS      harness-bind
+  NOT PROVEN harness-lock  (solver: sat; fails when: (or (and (< (- (+ (loaded-var SP000000000000000000002Q6VF78.bond-staker.bonded-sats (bonded-sats uint)) (loaded-var SP000000000000000000002Q6VF78.bond-staker.qu... (--full-conditions for the rest))
+  NOT PROVEN harness-release  (solver: sat; fails when: (and (<= (loaded-var SP000000000000000000002Q6VF78.bond-staker.bonded-sats (bonded-sats uint)) (+ (if (is-some (map-entry SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82J... (--full-conditions for the rest))
+  HOLDS      harness-unstake-early  (by solver)
+  NOT PROVEN harness-deposit  (solver: sat; fails when: (or (and (< (burn-block-height uint) (loaded-var SP000000000000000000002Q6VF78.bond-staker.pending-start-height (pending-start-height uint))) (<= (- (+ (loaded-... (--full-conditions for the rest))
+  HOLDS      harness-pay-rewards
 
-Summary: 0 holds (0 by solver), 0 violated, 31 not-proven, 0 skipped
+Summary: 21 holds (5 by solver), 0 violated, 10 not-proven, 0 skipped
 
+Command exited with non-zero status 5
+(60.06s 1892556KB resident)

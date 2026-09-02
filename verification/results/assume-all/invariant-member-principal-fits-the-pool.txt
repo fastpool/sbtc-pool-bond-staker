@@ -1,0 +1,42 @@
+Inductive invariant check for SP000000000000000000002Q6VF78.bond-staker
+(does each mutator preserve each invariant?)
+decided by: simplifier + z3
+assuming on entry: invariant-sbtc-covers-unpaid-rewards, invariant-no-principal-left-in-transit, invariant-treasury-covers-its-books, invariant-sweep-cannot-reach-principal, invariant-stx-covers-obligations, invariant-live-epoch-matches-the-pool, invariant-exits-fit-the-position, invariant-rewards-only-after-staking, invariant-paid-within-credited, invariant-finished-is-final, invariant-shares-never-exceed-the-roll, invariant-epoch-credit-is-accounted-for, invariant-member-shares-fit-the-epoch, invariant-member-rewards-fit-the-pool, invariant-member-principal-fits-the-pool, invariant-member-settled-within-the-pool, invariant-member-shares-need-an-epoch, invariant-signer-manager-is-a-contract
+
+invariant-member-principal-fits-the-pool
+  HOLDS      initialize
+  HOLDS      set-next-bond
+  HOLDS      bind-next-bond
+  NOT PROVEN deposit  (solver: sat; fails when: (and (not ncbe3ec8ce311c6fd1898837ebec99095) (or (and (< (burn-block-height uint) (loaded-var SP000000000000000000002Q6VF78.bond-staker.pending-start-height (pe... (--full-conditions for the rest))
+  HOLDS      deposit-stx  (by solver)
+  NOT PROVEN withdraw  (solver: sat; fails when: (or (and (< nb2756b329e298793b5f969c3661e2db7 (loaded-var SP000000000000000000002Q6VF78.bond-staker.epoch-count (epoch-count uint))) (<= (+ (if na496eecf41e5494... (--full-conditions for the rest))
+  NOT PROVEN stake  (solver: sat; fails when: (and (not n5a1e46f82f1852126d462497e79b51b5) (or (and (< (- (+ (loaded-var SP000000000000000000002Q6VF78.bond-staker.bonded-sats (bonded-sats uint)) (loaded-var... (--full-conditions for the rest))
+  NOT PROVEN unstake-sbtc  (solver: sat; fails when: (or (and (< nb2756b329e298793b5f969c3661e2db7 (loaded-var SP000000000000000000002Q6VF78.bond-staker.epoch-count (epoch-count uint))) (<= (+ (if na496eecf41e5494... (--full-conditions for the rest))
+  HOLDS      update-bond-registration
+  HOLDS      update-operator
+  HOLDS      trust-signer-manager
+  HOLDS      distrust-signer-manager
+  NOT PROVEN request-exit  (solver: sat; fails when: (or (and (< nb2756b329e298793b5f969c3661e2db7 (loaded-var SP000000000000000000002Q6VF78.bond-staker.epoch-count (epoch-count uint))) (<= (+ (if na496eecf41e5494... (--full-conditions for the rest))
+  HOLDS      cancel-exit
+  HOLDS      unstake-sbtc-early  (by solver)
+  HOLDS      sync-rewards
+  HOLDS      claim-rewards
+  NOT PROVEN claim-principal  (solver: sat; fails when: (and (not nd7a3bb36ea869815d4cfaa92d098f837) (or (and (< nb2756b329e298793b5f969c3661e2db7 (loaded-var SP000000000000000000002Q6VF78.bond-staker.epoch-count (ep... (--full-conditions for the rest))
+  HOLDS      settle-member
+  HOLDS      reserve-bridged-deposit
+  HOLDS      abandon-bridged-deposit
+  HOLDS      credit-bridged-deposit  (by solver)
+  NOT PROVEN debit-released-for-bridge  (solver: sat; fails when: (and (not n617d9d34db3200600bde30bc6cb6da83) (or (and (< nb2756b329e298793b5f969c3661e2db7 (loaded-var SP000000000000000000002Q6VF78.bond-staker.epoch-count (ep... (--full-conditions for the rest))
+  HOLDS      settle-bridge-withdrawal  (by solver)
+  HOLDS      sweep-unattributed-principal
+  HOLDS      harness-bind
+  NOT PROVEN harness-lock  (solver: sat; fails when: (and (or (and (< (- (+ (loaded-var SP000000000000000000002Q6VF78.bond-staker.bonded-sats (bonded-sats uint)) (loaded-var SP000000000000000000002Q6VF78.bond-stak... (--full-conditions for the rest))
+  NOT PROVEN harness-release  (solver: sat; fails when: (or (and (< nb2756b329e298793b5f969c3661e2db7 (loaded-var SP000000000000000000002Q6VF78.bond-staker.epoch-count (epoch-count uint))) (<= (+ (if na496eecf41e5494... (--full-conditions for the rest))
+  HOLDS      harness-unstake-early  (by solver)
+  NOT PROVEN harness-deposit  (solver: sat; fails when: (and (not nde27e5d9e9b3df4766990b286a8bd8d5) (or (and (< (burn-block-height uint) (loaded-var SP000000000000000000002Q6VF78.bond-staker.pending-start-height (pe... (--full-conditions for the rest))
+  HOLDS      harness-pay-rewards
+
+Summary: 21 holds (5 by solver), 0 violated, 10 not-proven, 0 skipped
+
+Command exited with non-zero status 5
+(87.45s 1893848KB resident)

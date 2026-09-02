@@ -1,0 +1,42 @@
+Inductive invariant check for SP000000000000000000002Q6VF78.bond-staker
+(does each mutator preserve each invariant?)
+decided by: simplifier + z3
+assuming on entry: invariant-sbtc-covers-unpaid-rewards, invariant-no-principal-left-in-transit, invariant-treasury-covers-its-books, invariant-sweep-cannot-reach-principal, invariant-stx-covers-obligations, invariant-live-epoch-matches-the-pool, invariant-exits-fit-the-position, invariant-rewards-only-after-staking, invariant-paid-within-credited, invariant-finished-is-final, invariant-shares-never-exceed-the-roll, invariant-epoch-credit-is-accounted-for, invariant-member-shares-fit-the-epoch, invariant-member-rewards-fit-the-pool, invariant-member-principal-fits-the-pool, invariant-member-settled-within-the-pool, invariant-member-shares-need-an-epoch, invariant-signer-manager-is-a-contract
+
+invariant-exits-fit-the-position
+  HOLDS      initialize  (by solver)
+  HOLDS      set-next-bond  (by solver)
+  HOLDS      bind-next-bond  (by solver)
+  HOLDS      deposit  (by solver)
+  HOLDS      deposit-stx  (by solver)
+  HOLDS      withdraw  (by solver)
+  HOLDS      stake
+  HOLDS      unstake-sbtc
+  HOLDS      update-bond-registration  (by solver)
+  HOLDS      update-operator  (by solver)
+  HOLDS      trust-signer-manager  (by solver)
+  HOLDS      distrust-signer-manager  (by solver)
+  NOT PROVEN request-exit  (solver: sat; fails when: (and (or (> (+ (if (and (> (+ n7f597a145933987897df4c317875e135 n9a2af294b978266deba2d3ebf7e65cec) u0) (loaded-var SP000000000000000000002Q6VF78.bond-staker.fin... (--full-conditions for the rest))
+  HOLDS      cancel-exit  (by solver)
+  NOT PROVEN unstake-sbtc-early  (solver: sat; fails when: (and (or (> (loaded-var SP000000000000000000002Q6VF78.bond-staker.exiting-sats (exiting-sats uint)) (- (loaded-var SP000000000000000000002Q6VF78.bond-staker.bon... (--full-conditions for the rest))
+  HOLDS      sync-rewards  (by solver)
+  HOLDS      claim-rewards  (by solver)
+  HOLDS      claim-principal  (by solver)
+  HOLDS      settle-member  (by solver)
+  HOLDS      reserve-bridged-deposit  (by solver)
+  HOLDS      abandon-bridged-deposit  (by solver)
+  HOLDS      credit-bridged-deposit  (by solver)
+  HOLDS      debit-released-for-bridge  (by solver)
+  HOLDS      settle-bridge-withdrawal  (by solver)
+  HOLDS      sweep-unattributed-principal  (by solver)
+  HOLDS      harness-bind  (by solver)
+  HOLDS      harness-lock
+  HOLDS      harness-release
+  NOT PROVEN harness-unstake-early  (solver: unknown; fails when: (and (or (> (loaded-var SP000000000000000000002Q6VF78.bond-staker.exiting-sats (exiting-sats uint)) (- (loaded-var SP000000000000000000002Q6VF78.bond-staker.bon... (--full-conditions for the rest))
+  HOLDS      harness-deposit  (by solver)
+  HOLDS      harness-pay-rewards  (by solver)
+
+Summary: 28 holds (24 by solver), 0 violated, 3 not-proven, 0 skipped
+
+Command exited with non-zero status 5
+(100.25s 1894220KB resident)

@@ -1,0 +1,42 @@
+Inductive invariant check for SP000000000000000000002Q6VF78.bond-staker
+(does each mutator preserve each invariant?)
+decided by: simplifier + z3
+assuming on entry: invariant-sbtc-covers-unpaid-rewards, invariant-no-principal-left-in-transit, invariant-treasury-covers-its-books, invariant-sweep-cannot-reach-principal, invariant-stx-covers-obligations, invariant-live-epoch-matches-the-pool, invariant-exits-fit-the-position, invariant-rewards-only-after-staking, invariant-paid-within-credited, invariant-finished-is-final, invariant-shares-never-exceed-the-roll, invariant-epoch-credit-is-accounted-for, invariant-member-shares-fit-the-epoch, invariant-member-rewards-fit-the-pool, invariant-member-principal-fits-the-pool, invariant-member-settled-within-the-pool, invariant-member-shares-need-an-epoch, invariant-signer-manager-is-a-contract
+
+invariant-member-rewards-fit-the-pool
+  HOLDS      initialize
+  HOLDS      set-next-bond
+  HOLDS      bind-next-bond
+  HOLDS      deposit
+  HOLDS      deposit-stx
+  HOLDS      withdraw
+  NOT PROVEN stake  (solver: unknown; fails when: (and (> n70828d77386ce7c2ef9e8d9b8d1e5bdb (- (loaded-var SP000000000000000000002Q6VF78.bond-staker.total-credited (total-credited uint)) (loaded-var SP000000000... (--full-conditions for the rest))
+  HOLDS      unstake-sbtc
+  HOLDS      update-bond-registration
+  HOLDS      update-operator
+  HOLDS      trust-signer-manager
+  HOLDS      distrust-signer-manager
+  HOLDS      request-exit
+  HOLDS      cancel-exit
+  HOLDS      unstake-sbtc-early
+  HOLDS      sync-rewards  (by solver)
+  NOT PROVEN claim-rewards  (solver: sat; fails when: (or (and (< nd5f4f8f6ff868fa2737e45a7ab8ddedc (loaded-var SP000000000000000000002Q6VF78.bond-staker.epoch-count (epoch-count uint))) (<= (+ (if ne8c819dfbe6d361... (--full-conditions for the rest))
+  HOLDS      claim-principal
+  HOLDS      settle-member
+  HOLDS      reserve-bridged-deposit
+  HOLDS      abandon-bridged-deposit
+  HOLDS      credit-bridged-deposit
+  HOLDS      debit-released-for-bridge
+  HOLDS      settle-bridge-withdrawal
+  HOLDS      sweep-unattributed-principal
+  HOLDS      harness-bind
+  NOT PROVEN harness-lock  (solver: sat; fails when: (and (> n70828d77386ce7c2ef9e8d9b8d1e5bdb (- (loaded-var SP000000000000000000002Q6VF78.bond-staker.total-credited (total-credited uint)) (loaded-var SP000000000... (--full-conditions for the rest))
+  HOLDS      harness-release
+  HOLDS      harness-unstake-early
+  HOLDS      harness-deposit
+  HOLDS      harness-pay-rewards
+
+Summary: 28 holds (1 by solver), 0 violated, 3 not-proven, 0 skipped
+
+Command exited with non-zero status 5
+(92.19s 1893536KB resident)

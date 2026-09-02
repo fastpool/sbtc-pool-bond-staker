@@ -6,9 +6,9 @@
 # break the contract on purpose and require the invariant it breaks to stop
 # holding. Run this after any change to the stubs or the engine.
 #
-# The mutations are deliberately placed in cheap mutators. Anything that goes
-# through `settle` -- a ten-step fold that branches at every step -- does not
-# finish, so a mutation there would prove nothing either way.
+# Three mutations sit in a cheap mutator; the fourth goes through `settle`
+# and a payout, so it also checks that the engine sees a mutator's STX
+# transfer and pays what the mutator computed, not a re-read of it.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 . verification/deps.sh
@@ -54,5 +54,10 @@ check "pay reward that was never credited" \
 check "let exits exceed the position" \
   's/\(map-set operators who enabled\)/(var-set exiting-sats (+ (var-get bonded-sats) u1)) (map-set operators who enabled)/' \
   invariant-exits-fit-the-position update-operator
+
+# Pay out twice the STX that was written off the books.
+check "overpay the withdrawn STX" \
+  's/\(try! \(pay-principal depositor sats ustx\)\)/(try! (pay-principal depositor sats (* u2 ustx)))/' \
+  invariant-stx-covers-obligations withdraw
 
 exit $fail

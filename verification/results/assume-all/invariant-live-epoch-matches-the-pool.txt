@@ -1,6 +1,7 @@
 Inductive invariant check for SP000000000000000000002Q6VF78.bond-staker
 (does each mutator preserve each invariant?)
 decided by: simplifier + z3
+assuming on entry: invariant-sbtc-covers-unpaid-rewards, invariant-no-principal-left-in-transit, invariant-treasury-covers-its-books, invariant-sweep-cannot-reach-principal, invariant-stx-covers-obligations, invariant-live-epoch-matches-the-pool, invariant-exits-fit-the-position, invariant-rewards-only-after-staking, invariant-paid-within-credited, invariant-finished-is-final, invariant-shares-never-exceed-the-roll, invariant-epoch-credit-is-accounted-for, invariant-member-shares-fit-the-epoch, invariant-member-rewards-fit-the-pool, invariant-member-principal-fits-the-pool, invariant-member-settled-within-the-pool, invariant-member-shares-need-an-epoch, invariant-signer-manager-is-a-contract
 
 invariant-live-epoch-matches-the-pool
   HOLDS      initialize
@@ -37,4 +38,4 @@ invariant-live-epoch-matches-the-pool
 
 Summary: 31 holds (4 by solver), 0 violated, 0 not-proven, 0 skipped
 
-(43.15s 1885544KB resident)
+(85.90s 1894184KB resident)

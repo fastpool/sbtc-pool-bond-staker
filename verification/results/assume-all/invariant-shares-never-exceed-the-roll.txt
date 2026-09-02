@@ -1,15 +1,16 @@
 Inductive invariant check for SP000000000000000000002Q6VF78.bond-staker
 (does each mutator preserve each invariant?)
 decided by: simplifier + z3
+assuming on entry: invariant-sbtc-covers-unpaid-rewards, invariant-no-principal-left-in-transit, invariant-treasury-covers-its-books, invariant-sweep-cannot-reach-principal, invariant-stx-covers-obligations, invariant-live-epoch-matches-the-pool, invariant-exits-fit-the-position, invariant-rewards-only-after-staking, invariant-paid-within-credited, invariant-finished-is-final, invariant-shares-never-exceed-the-roll, invariant-epoch-credit-is-accounted-for, invariant-member-shares-fit-the-epoch, invariant-member-rewards-fit-the-pool, invariant-member-principal-fits-the-pool, invariant-member-settled-within-the-pool, invariant-member-shares-need-an-epoch, invariant-signer-manager-is-a-contract
 
-invariant-rewards-only-after-staking
+invariant-shares-never-exceed-the-roll
   HOLDS      initialize
   HOLDS      set-next-bond
   HOLDS      bind-next-bond
   HOLDS      deposit
   HOLDS      deposit-stx
   HOLDS      withdraw
-  HOLDS      stake  (by solver)
+  HOLDS      stake
   HOLDS      unstake-sbtc
   HOLDS      update-bond-registration
   HOLDS      update-operator
@@ -19,7 +20,7 @@ invariant-rewards-only-after-staking
   HOLDS      cancel-exit
   HOLDS      unstake-sbtc-early
   HOLDS      sync-rewards
-  NOT PROVEN claim-rewards  (solver: sat; fails when: (and (<= (loaded-var SP000000000000000000002Q6VF78.bond-staker.epoch-count (epoch-count uint)) u0) (<= n52c536df605fec97db4c14f6a96b0969 (unwrap-panic (map-entr... (--full-conditions for the rest))
+  HOLDS      claim-rewards
   HOLDS      claim-principal
   HOLDS      settle-member
   HOLDS      reserve-bridged-deposit
@@ -29,13 +30,12 @@ invariant-rewards-only-after-staking
   HOLDS      settle-bridge-withdrawal
   HOLDS      sweep-unattributed-principal
   HOLDS      harness-bind
-  HOLDS      harness-lock  (by solver)
+  HOLDS      harness-lock
   HOLDS      harness-release
   HOLDS      harness-unstake-early
   HOLDS      harness-deposit
   HOLDS      harness-pay-rewards
 
-Summary: 30 holds (2 by solver), 0 violated, 1 not-proven, 0 skipped
+Summary: 31 holds (0 by solver), 0 violated, 0 not-proven, 0 skipped
 
-Command exited with non-zero status 5
-(50.36s 1886632KB resident)
+(86.59s 1893160KB resident)

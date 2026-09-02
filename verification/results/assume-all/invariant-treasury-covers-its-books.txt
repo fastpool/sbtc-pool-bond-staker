@@ -1,6 +1,7 @@
 Inductive invariant check for SP000000000000000000002Q6VF78.bond-staker
 (does each mutator preserve each invariant?)
 decided by: simplifier + z3
+assuming on entry: invariant-sbtc-covers-unpaid-rewards, invariant-no-principal-left-in-transit, invariant-treasury-covers-its-books, invariant-sweep-cannot-reach-principal, invariant-stx-covers-obligations, invariant-live-epoch-matches-the-pool, invariant-exits-fit-the-position, invariant-rewards-only-after-staking, invariant-paid-within-credited, invariant-finished-is-final, invariant-shares-never-exceed-the-roll, invariant-epoch-credit-is-accounted-for, invariant-member-shares-fit-the-epoch, invariant-member-rewards-fit-the-pool, invariant-member-principal-fits-the-pool, invariant-member-settled-within-the-pool, invariant-member-shares-need-an-epoch, invariant-signer-manager-is-a-contract
 
 invariant-treasury-covers-its-books
   HOLDS      initialize
@@ -24,7 +25,7 @@ invariant-treasury-covers-its-books
   HOLDS      settle-member
   HOLDS      reserve-bridged-deposit
   HOLDS      abandon-bridged-deposit
-  NOT PROVEN credit-bridged-deposit  (solver: sat; fails when: (or (and (< (if (is-some (map-entry SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token.balances SP000000000000000000002Q6VF78.bond-treasury)) (unwrap-panic (m... (--full-conditions for the rest))
+  NOT PROVEN credit-bridged-deposit  (solver: sat; fails when: (and (< (if (is-some (map-entry SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token.balances SP000000000000000000002Q6VF78.bond-treasury)) (unwrap-panic (map-e... (--full-conditions for the rest))
   HOLDS      debit-released-for-bridge
   HOLDS      settle-bridge-withdrawal  (by solver)
   HOLDS      sweep-unattributed-principal  (by solver)
@@ -38,4 +39,4 @@ invariant-treasury-covers-its-books
 Summary: 30 holds (8 by solver), 0 violated, 1 not-proven, 0 skipped
 
 Command exited with non-zero status 5
-(48.52s 1885004KB resident)
+(96.17s 1894036KB resident)

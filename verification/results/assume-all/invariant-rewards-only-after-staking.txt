@@ -1,0 +1,42 @@
+Inductive invariant check for SP000000000000000000002Q6VF78.bond-staker
+(does each mutator preserve each invariant?)
+decided by: simplifier + z3
+assuming on entry: invariant-sbtc-covers-unpaid-rewards, invariant-no-principal-left-in-transit, invariant-treasury-covers-its-books, invariant-sweep-cannot-reach-principal, invariant-stx-covers-obligations, invariant-live-epoch-matches-the-pool, invariant-exits-fit-the-position, invariant-rewards-only-after-staking, invariant-paid-within-credited, invariant-finished-is-final, invariant-shares-never-exceed-the-roll, invariant-epoch-credit-is-accounted-for, invariant-member-shares-fit-the-epoch, invariant-member-rewards-fit-the-pool, invariant-member-principal-fits-the-pool, invariant-member-settled-within-the-pool, invariant-member-shares-need-an-epoch, invariant-signer-manager-is-a-contract
+
+invariant-rewards-only-after-staking
+  HOLDS      initialize  (by solver)
+  HOLDS      set-next-bond  (by solver)
+  HOLDS      bind-next-bond  (by solver)
+  HOLDS      deposit  (by solver)
+  HOLDS      deposit-stx  (by solver)
+  HOLDS      withdraw  (by solver)
+  HOLDS      stake  (by solver)
+  HOLDS      unstake-sbtc  (by solver)
+  HOLDS      update-bond-registration  (by solver)
+  HOLDS      update-operator  (by solver)
+  HOLDS      trust-signer-manager  (by solver)
+  HOLDS      distrust-signer-manager  (by solver)
+  HOLDS      request-exit  (by solver)
+  HOLDS      cancel-exit  (by solver)
+  HOLDS      unstake-sbtc-early  (by solver)
+  HOLDS      sync-rewards  (by solver)
+  NOT PROVEN claim-rewards  (solver: sat; fails when: (and (<= nd828a4a03e98523cc483d0747b257b05 (unwrap-panic (map-entry SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token.balances SP000000000000000000002Q6VF78.... (--full-conditions for the rest))
+  HOLDS      claim-principal  (by solver)
+  HOLDS      settle-member  (by solver)
+  HOLDS      reserve-bridged-deposit  (by solver)
+  HOLDS      abandon-bridged-deposit  (by solver)
+  HOLDS      credit-bridged-deposit  (by solver)
+  HOLDS      debit-released-for-bridge  (by solver)
+  HOLDS      settle-bridge-withdrawal  (by solver)
+  HOLDS      sweep-unattributed-principal  (by solver)
+  HOLDS      harness-bind  (by solver)
+  HOLDS      harness-lock  (by solver)
+  HOLDS      harness-release  (by solver)
+  HOLDS      harness-unstake-early  (by solver)
+  HOLDS      harness-deposit  (by solver)
+  HOLDS      harness-pay-rewards  (by solver)
+
+Summary: 30 holds (30 by solver), 0 violated, 1 not-proven, 0 skipped
+
+Command exited with non-zero status 5
+(101.45s 1893880KB resident)
