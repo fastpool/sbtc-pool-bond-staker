@@ -186,7 +186,7 @@
 )
 
 (define-private (read-input
-    (slot (buff 1))
+    (slot_ (buff 1))
     (state {
       tx: (buff 65536),
       cursor: uint,
@@ -524,7 +524,7 @@
         ))
         ;; Refused early so an unrelated parent cannot pick the lookup
         ;; script; the fold below checks it again.
-        (named (asserts! (is-eq (get txid funding) (get txid first)) ERR_PARENT_MISMATCH))
+        (named_ (asserts! (is-eq (get txid funding) (get txid first)) ERR_PARENT_MISMATCH))
         ;; Longer than any supported address script: never announced.
         (script (unwrap! (as-max-len? (get script funding) u34) ERR_UNSUPPORTED_ADDRESS))
         (checked (fold check-input INPUT_INDEXES {
@@ -756,7 +756,7 @@
   (let (
       (swept (unwrap! (get-swept-deposit txid vout-index) ERR_DEPOSIT_NOT_SWEPT))
       ;; `tx` must hash to the registry's txid; later reads rely on that.
-      (authentic (asserts! (is-eq (try! (get-txid tx)) txid) ERR_TXID_MISMATCH))
+      (authentic_ (asserts! (is-eq (try! (get-txid tx)) txid) ERR_TXID_MISMATCH))
       ;; The one script every input is locked to.
       (script (try! (get-funding-script tx parents)))
       (claim (unwrap! (map-get? announcements script) ERR_UNKNOWN_ANNOUNCEMENT))

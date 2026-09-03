@@ -514,9 +514,7 @@
 (define-read-only (get-unattributed-principal)
   (let (
       (balance (get-treasury-balance))
-      (accounted (+ (var-get queued-sats)
-        (+ (var-get released-sats) (var-get withdrawing-sats))
-      ))
+      (accounted (+ (var-get queued-sats) (var-get released-sats) (var-get withdrawing-sats)))
     )
     (if (> balance accounted)
       (- balance accounted)
@@ -1030,7 +1028,7 @@
 
       ;; Exits and the roll haircut are released; the rest carries across.
       (var-set released-sats
-        (+ (var-get released-sats) (+ (var-get exiting-sats) (- eligible sats)))
+        (+ (var-get released-sats) (var-get exiting-sats) (- eligible sats))
       )
       (var-set released-ustx (+ (var-get released-ustx) (var-get exiting-ustx)))
       (var-set exiting-sats u0)
@@ -2241,7 +2239,7 @@
     })
     (var-set epoch-count (+ epoch u1))
     (var-set released-sats
-      (+ (var-get released-sats) (+ (var-get exiting-sats) (- eligible sats)))
+      (+ (var-get released-sats) (var-get exiting-sats) (- eligible sats))
     )
     (var-set released-ustx (+ (var-get released-ustx) (var-get exiting-ustx)))
     (var-set exiting-sats u0)
@@ -2364,9 +2362,8 @@
 ;; #[env(simnet)]
 (define-read-only (invariant-treasury-covers-its-books)
   (>= (get-treasury-balance)
-    (+ (var-get queued-sats)
-      (+ (var-get released-sats) (var-get withdrawing-sats))
-    ))
+    (+ (var-get queued-sats) (var-get released-sats) (var-get withdrawing-sats))
+  )
 )
 
 ;; Receipts equal principal on the books; locked receipts equal withdrawing.
@@ -2374,13 +2371,13 @@
 (define-read-only (invariant-receipts-match-principal)
   (and
     (is-eq (unwrap-panic (contract-call? .iou-bond-btc get-total-supply))
-      (+ (var-get queued-sats) (+ (var-get bonded-sats) (var-get released-sats)))
+      (+ (var-get queued-sats) (var-get bonded-sats) (var-get released-sats))
     )
     (is-eq (unwrap-panic (contract-call? .iou-bond-btc get-locked-supply))
       (var-get withdrawing-sats)
     )
     (is-eq (unwrap-panic (contract-call? .iou-bond-stx get-total-supply))
-      (+ (var-get queued-ustx) (+ (var-get bonded-ustx) (var-get released-ustx)))
+      (+ (var-get queued-ustx) (var-get bonded-ustx) (var-get released-ustx))
     )
   )
 )
@@ -2389,10 +2386,9 @@
 ;; #[env(simnet)]
 (define-read-only (invariant-sweep-cannot-reach-principal)
   (<=
-    (+ (get-unattributed-principal)
-      (+ (var-get queued-sats)
-        (+ (var-get released-sats) (var-get withdrawing-sats))
-      ))
+    (+ (get-unattributed-principal) (var-get queued-sats) (var-get released-sats)
+      (var-get withdrawing-sats)
+    )
     (get-treasury-balance)
   )
 )
@@ -2402,7 +2398,7 @@
 (define-read-only (invariant-stx-covers-obligations)
   (let ((account (stx-account current-contract)))
     (>= (+ (get locked account) (get unlocked account))
-      (+ (var-get queued-ustx) (+ (var-get bonded-ustx) (var-get released-ustx)))
+      (+ (var-get queued-ustx) (var-get bonded-ustx) (var-get released-ustx))
     )
   )
 )
@@ -2619,12 +2615,8 @@
     ;; Principal moves between buckets, never created or lost.
     (asserts!
       (is-eq
-        (+ (get bonded-sats settled)
-          (+ (get queued-sats settled) (get released-sats settled))
-        )
-        (+ (get bonded-sats record)
-          (+ (get queued-sats record) (get released-sats record))
-        ))
+        (+ (get bonded-sats settled) (get queued-sats settled) (get released-sats settled))
+        (+ (get bonded-sats record) (get queued-sats record) (get released-sats record)))
       (err u2904)
     )
     (ok true)
