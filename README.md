@@ -108,7 +108,7 @@ next one, and the roll after that is a whole bond term further on.
 | `initialize` | deployer, once | signer manager and operator |
 | `set-next-bond` | operator | a floor on which bond period comes next, which is how the members skip one. Optional |
 | `bind-next-bond` | **permissionless** | after the bond admin allowlists this contract. No arguments: index, allocation and terms all come from pox-5. Opens deposits |
-| `deposit` | anyone | while a bond is bound and has not started |
+| `deposit` | anyone | while a bond is bound and its stake window has not closed |
 | `deposit-stx` | anyone | to raise the STX behind the pool's sats |
 | `bond-bridge.commit-btc-address` / `reveal-btc-address` | anyone | to join with L1 bitcoin, naming the address it will come from and paying the STX leg |
 | `bond-bridge.claim-btc-address` | anyone | the same in one call, for an address they can sign with — see [the fast lane](#the-fast-lane) |
@@ -146,7 +146,14 @@ them before the fact:
   moment the call returns. `sync-rewards` is permissionless, so calling it first
   banks everything that has actually arrived. Only the live epoch's shares are
   at stake: while a previous epoch is still the one taking rewards, the member's
-  claim on it is a stash, which leaving the live bond does not touch.
+  claim on it is a stash, which leaving the live bond does not touch. The one
+  exception is the last member out: with no shares left, a pot that had arrived
+  could never be split, so that exit is refused while one is waiting
+  (`ERR_REWARDS_PENDING`, u131; `get-early-unstake-preview` reports it as
+  `sync-first`) and goes through after a `sync-rewards` -- which hands the
+  member the whole pot. "Waiting" means what a sync would actually credit,
+  `get-recognizable-rewards`: the sub-share remainder the integer split can
+  leave behind is nobody's to recognise and does not hold the door.
 - **The rest of the bond is forfeited outright**, because pox-5 drops the
   unstaked sats from the current reward cycle as well as every later one.
 
@@ -642,10 +649,14 @@ The genesis run ends by reading pox-5 back — `get-total-sbtc-staked-for-bond`
 and `get-bond-membership` — so the pool's registration is confirmed by the
 protocol rather than by our own accounting.
 
-**The bond does not exist yet.** `setup-bond` has not been called for any index,
-so the simulation creates it, and every parameter under `BOND` in
-`scripts/simulate-mainnet.mjs` is *our assumption*, not the protocol's. What is
-being tested is the shape of the run, not the yields it implies.
+**The genesis bond exists and allowlists us.** The bond admin's `setup-bond` for
+index 1 names `SPFCGF789WX1B737VQYAQ6BG3QYVMJGPDKRKYK00.esbee-dao-bond-staker-1`
+with 5 BTC of room, so the run takes the bond as it is — real pricing, real
+grant, the published `fastpool-max500-signer-manager` — and only simulates the
+allowlisting when the bond it lands on is not set up yet. In that case the
+parameters under `BOND` in `scripts/simulate-mainnet.mjs` are *our assumption*,
+not the protocol's, and what is being tested is the shape of the run, not the
+yields it implies.
 
 **The genesis bond is index 1, not 0.** The bond starting at burn height 966,350
 (reward cycle 143, [announced here][genesis]) is index 1; index 0 starts a cycle
@@ -662,8 +673,12 @@ assuming it.
       --manifest-path Clarinet-testnet.toml \
       --deployment-plan-path deployments/testnet-plan.yaml
 
-Needs a funded seed phrase in `settings/Testnet.toml` (gitignored;
-`clarinet deployments encrypt` keeps it out of plaintext).
+Mainnet is the same three commands with `mainnet` in place of `testnet`
+(`build:mainnet`, `plan:mainnet`, `Clarinet-mainnet.toml`,
+`deployments/mainnet-plan.yaml`); [MAINNET.md](MAINNET.md) is the runbook.
+
+Needs a funded seed phrase in `settings/Testnet.toml` or `settings/Mainnet.toml`
+(gitignored; `clarinet deployments encrypt` keeps it out of plaintext).
 
 `deployments/testnet-plan.yaml` is checked in as a template with `<DEPLOYER>`
 placeholders, so the syntax is there to read before you have an address;
@@ -696,20 +711,30 @@ address, and their unsuffixed and `-2` names are spent.
 
 `build:testnet` therefore emits `build/testnet/vault-3.clar`, rewriting every
 `.bond-staker` reference in the sibling contracts along with the file name; the
-plan generator and `Clarinet-testnet.toml` agree. `build:mainnet` keeps
-`bond-staker`. Nothing in `contracts/` changes, and the tests are unaffected.
+plan generator and `Clarinet-testnet.toml` agree. Nothing in `contracts/`
+changes, and the tests are unaffected.
+
+**On mainnet the pool is `esbee-dao-bond-staker-1`**, because that is the name
+the genesis bond's `setup-bond` allowlisted (5 BTC, bond index 1). The siblings
+carry the same `-1` so the four contracts read as one deployment; the
+unsuffixed names were free, so this is a choice, not a constraint.
+`build:mainnet`, `plan:mainnet` and `Clarinet-mainnet.toml` agree on it.
 
 To publish under other names again, pass `--staker-name` and `--suffix` to
-both commands and rename the four matching sections in `Clarinet-testnet.toml`:
+both commands and rename the four matching sections in the network's
+`Clarinet-<network>.toml`:
 
     pnpm run build:testnet -- --staker-name vault-4 --suffix -4
     pnpm run plan:testnet ST3YOUR…DEPLOYER -- --staker-name vault-4 --suffix -4
 
 `initialize` binds the pool to a signer manager, which must already be
-registered with pox-5. The default is
+registered with pox-5. The testnet default is
 `ST1B38CGQRPXEMRH7B66VXTS22DQTNMSW4YJJ7QK1.signer-manager` — of the three in
 testnet's signer set it has the largest delegation and stays in through cycle
-10. Pass a different one as the second argument if that changes.
+10. The mainnet default is
+`SPMPMA1V6P430M8C91QS1G9XJ95S59JS1TZFZ4Q4.fastpool-max500-signer-manager`,
+the published Fast Pool manager, registered with pox-5. Pass a different one as
+the second argument if that changes.
 
 Deploying gets you an address, not a working pool: `find-next-bond` answers
 `none` and `bind-next-bond` returns `ERR_BOND_NOT_FOUND (u103)` until the bond

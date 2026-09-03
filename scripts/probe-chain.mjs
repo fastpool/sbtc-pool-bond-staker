@@ -1,23 +1,42 @@
-// Re-read testnet: burn height, the bonds pox-5 has set up, whose pool names
+// Re-read a network: burn height, the bonds pox-5 has set up, whose pool names
 // they allowlist, and where each published pool stands. This is what the
-// tables in TESTNET.md are gathered from; run it before acting on any height
-// written there.
+// tables in TESTNET.md and MAINNET.md are gathered from; run it before acting
+// on any height written there.
 //
-//   node scripts/probe-testnet.mjs                 # vault-1, vault-2, vault-3
-//   node scripts/probe-testnet.mjs vault-3 vault-4  # names to ask about
+//   node scripts/probe-chain.mjs testnet                 # vault-1, vault-2, vault-3
+//   node scripts/probe-chain.mjs testnet vault-3 vault-4  # names to ask about
+//   node scripts/probe-chain.mjs mainnet                 # bond-staker
 //
 // Everything is a read-only call through the public API; nothing is signed.
 import { cvToJSON, fetchCallReadOnlyFunction, principalCV, uintCV } from "@stacks/transactions";
 
-const API = "https://api.testnet.hiro.so";
-const DEPLOYER = "STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM";
-const POX = { contractAddress: "ST000000000000000000002AMW42H", contractName: "pox-5" };
+// The same key on both networks; the address differs only in its version byte.
+const NETWORKS = {
+  testnet: {
+    api: "https://api.testnet.hiro.so",
+    deployer: "STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM",
+    pox: "ST000000000000000000002AMW42H",
+    names: ["vault-1", "vault-2", "vault-3"],
+  },
+  mainnet: {
+    api: "https://api.hiro.so",
+    deployer: "SPFCGF789WX1B737VQYAQ6BG3QYVMJGPDKRKYK00",
+    pox: "SP000000000000000000002Q6VF78",
+    names: ["esbee-dao-bond-staker-1"],
+  },
+};
 // How far past the current height to look for bonds. pox-5 sets a bond up at
 // most two cycles ahead, so anything beyond the next few is `none` anyway.
 const LOOKAHEAD = 6;
 
-const names = process.argv.slice(2).filter((a) => a !== "--");
-if (names.length === 0) names.push("vault-1", "vault-2", "vault-3");
+const [network, ...names] = process.argv.slice(2).filter((a) => a !== "--");
+if (!NETWORKS[network]) {
+  console.error(`usage: node scripts/probe-chain.mjs <${Object.keys(NETWORKS).join("|")}> [name ...]`);
+  process.exit(1);
+}
+const { api: API, deployer: DEPLOYER, pox: boot } = NETWORKS[network];
+const POX = { contractAddress: boot, contractName: "pox-5" };
+if (names.length === 0) names.push(...NETWORKS[network].names);
 
 const call = async (contract, functionName, functionArgs = []) =>
   cvToJSON(
@@ -25,8 +44,9 @@ const call = async (contract, functionName, functionArgs = []) =>
       ...contract,
       functionName,
       functionArgs,
-      network: "testnet",
+      network,
       senderAddress: DEPLOYER,
+      client: { baseUrl: API },
     }),
   );
 // `cvToJSON` nests every value under `.value`; these unwrap the shapes used here.

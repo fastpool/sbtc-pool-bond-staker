@@ -280,6 +280,20 @@ describe("bond-staker: withdrawing a queued deposit", () => {
     expect(deposit(alice, 1)).toBeErr(Cl.uint(109)); // TOO_LATE
     expect(withdraw(alice).type).toBe("ok");
   });
+
+  // A deposit in the prepare phase before the bond would be priced for a bond
+  // the pool can no longer enter, so the deposit book closes with the stake
+  // window rather than at the start height.
+  it("closes deposits where the stake window closes, not at the start", () => {
+    advanceToBurnHeight(stakeWindowEnd(BOND_INDEX) - 1);
+    expect(deposit(alice, ALICE_SATS).type).toBe("ok");
+    expect(depositStx(alice, 1).type).toBe("ok");
+
+    advanceToBurnHeight(stakeWindowEnd(BOND_INDEX));
+    expect(deposit(alice, 1)).toBeErr(Cl.uint(109)); // TOO_LATE
+    expect(depositStx(alice, 1)).toBeErr(Cl.uint(109));
+    expect(withdraw(alice).type).toBe("ok");
+  });
 });
 
 describe("bond-staker: staking the first bond", () => {

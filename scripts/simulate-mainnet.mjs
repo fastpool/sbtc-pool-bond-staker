@@ -10,14 +10,15 @@
 // for, which is the only way to model the bond admin's side of the launch.
 //
 // Two things this can prove and the test suite cannot: that the contracts
-// deploy and initialize against mainnet's pox-5, and that the pool can be
-// allowlisted for the genesis bond and staked into it.
+// deploy and initialize against mainnet's pox-5, and that the pool can bind
+// the genesis bond under the name its allowlist spells and stake into it.
 //
-// One thing it cannot: the genesis bond does not exist yet. `setup-bond` has
-// not been called for any index, so the simulation has to create it, and the
-// parameters below are *our assumptions*, not the protocol's. Every number
-// under BOND is a guess until the real `setup-bond` lands; the shape of the
-// run is what is being tested, not the yields it implies.
+// The genesis bond is set up on mainnet and allowlists
+// `<deployer>.esbee-dao-bond-staker-1`, so the run takes the bond as it is:
+// its real pricing, the real grant, the real signer manager. The allowlisting
+// step is only simulated when the bond the run lands on does not exist yet --
+// a later bond, say -- and then the parameters under BOND are *our
+// assumptions*, not the protocol's.
 import { createHash } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -29,9 +30,7 @@ import {
   fetchCallReadOnlyFunction,
   hexToCV,
   cvToString,
-  privateKeyToPublic,
   serializeCV,
-  signMessageHashRsv,
 } from "@stacks/transactions";
 import { SimulationBuilder, getSimulationResult } from "stxer";
 import { buildTx, scriptFor } from "../lib/btc-tx.js";
@@ -50,6 +49,10 @@ const GENESIS_BURN_HEIGHT = 966_350;
 // Same key as the testnet deployer, in its mainnet form.
 const DEPLOYER = "SPFCGF789WX1B737VQYAQ6BG3QYVMJGPDKRKYK00";
 
+// The signer manager the pool stakes through: the published one, already
+// registered with pox-5, so nothing has to be deployed or registered for it.
+const MANAGER_ID = "SPMPMA1V6P430M8C91QS1G9XJ95S59JS1TZFZ4Q4.fastpool-max500-signer-manager";
+
 // A real, funded mainnet account, used only to give the simulated member STX
 // for the bond's STX leg. It is never asked to do anything else.
 const FUNDER = "SP1K1A1PMGW2ZJCNF46NWZWHG8TS1D23EGH1KNK60";
@@ -60,28 +63,41 @@ const FUNDER = "SP1K1A1PMGW2ZJCNF46NWZWHG8TS1D23EGH1KNK60";
 // then cascades into every contract that calls it.
 const CLARITY = ClarityVersion.Clarity6;
 
-const MANAGER = "fastpool-max500-signer-manager";
-const POOL = "bond-staker";
-const SIGNER_KEY =
-  "010101010101010101010101010101010101010101010101010101010101010101";
-const AUTH_ID = 1;
+// Published name -> source name, as `build-network.mjs mainnet` writes them.
+// The pool is called what the genesis bond's grant spells; the siblings carry
+// the same `-1`.
+const NAMES = {
+  "esbee-dao-bond-staker-1": "bond-staker",
+  "bond-treasury-1": "bond-treasury",
+  "bond-bridge-1": "bond-bridge",
+  "esbee-dao-1": "esbee-dao",
+};
+const POOL = "esbee-dao-bond-staker-1";
+const TREASURY = "bond-treasury-1";
+const BRIDGE = "bond-bridge-1";
+const DAO = "esbee-dao-1";
 
 // How far behind the tip to pin. The newest blocks are not indexed yet.
 const SETTLE_LAG = 10;
 
-// Our assumptions about the bond. Matching the shape of the testnet bonds:
-// `stx-value-ratio` is uSTX per 100 sats and `min-ustx-ratio` is in bips, so
-// 1000 and 500 price the STX leg at 50 STX per whole BTC.
+// Our assumptions about a bond the run has to create itself. Matching the
+// genesis bond's terms: `stx-value-ratio` is uSTX per 100 sats and
+// `min-ustx-ratio` is in bips, so 310237 and 500 price the STX leg at about
+// 15 512 STX per whole BTC.
 const BOND = {
-  targetRate: 1000,
-  stxValueRatio: 1000,
+  targetRate: 300,
+  stxValueRatio: 310_237,
   minUstxRatio: 500,
-  allowanceSats: 100_000_000, // 1 BTC of room for us on the allowlist
-  maxSats: 100_000_000, // ...all of which the pool binds
+  allowanceSats: 500_000_000, // 5 BTC of room for us on the allowlist, as granted
 };
 
-// What the simulated member brings.
-const MEMBER_SATS = 50_000_000; // 0.5 BTC
+// What the simulated member brings. 0.01 BTC wants ~155 STX at the genesis
+// bond's pricing, which the funder's transfer below covers.
+const MEMBER_SATS = 1_000_000;
+const MEMBER_USTX = 200_000_000;
+
+// bond-bridge's REVEAL_DELAY: burn blocks between a commit and its reveal.
+const REVEAL_DELAY = 2;
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -93,24 +109,39 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
  */
 const contract = (name) => {
   const built = join(root, "build", "mainnet", `${name}.clar`);
-  const source = join(root, "contracts", `${name}.clar`);
+  const source = join(root, "contracts", `${NAMES[name]}.clar`);
   if (statSync(built).mtimeMs < statSync(source).mtimeMs) {
     console.error(
-      `build/mainnet/${name}.clar is older than contracts/${name}.clar\n` +
+      `build/mainnet/${name}.clar is older than contracts/${NAMES[name]}.clar\n` +
         `  run: pnpm run build:mainnet`,
     );
     process.exit(1);
   }
-  return readFileSync(built, "utf8");
+  return fitForSdk(name, readFileSync(built, "utf8"));
 };
-// The vendored copy is the published mainnet contract with its boot address
-// rewritten for simnet, so rewriting it back hands this simulation the bytes
-// that are actually on chain. See `scripts/build-test-managers.mjs`.
-const managerSource = () =>
-  readFileSync(
-    join(root, "tests", "contracts", `${MANAGER}.clar`),
-    "utf8",
-  ).replaceAll("ST000000000000000000002AMW42H", "SP000000000000000000002Q6VF78");
+
+/**
+ * `@stacks/transactions` refuses a code body over 100,000 bytes -- its own
+ * cap, not the chain's (a transaction may be 2 MB) and not clarinet's, whose
+ * Rust codec deploys the published source as written. stxer encodes with the
+ * SDK, so a source past the cap is simulated with its comment lines dropped:
+ * the same code, byte for byte, minus the prose. Announced, never quiet.
+ */
+const SDK_CODE_BODY_CAP = 100_000;
+const fitForSdk = (name, source) => {
+  if (Buffer.byteLength(source) <= SDK_CODE_BODY_CAP) return source;
+  const stripped = source
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith(";;"))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n");
+  console.log(
+    `  ${name}: ${Buffer.byteLength(source)} bytes is over the stacks.js cap of ` +
+      `${SDK_CODE_BODY_CAP}; simulating without comment lines (${Buffer.byteLength(stripped)} bytes). ` +
+      `clarinet deploys the full source.`,
+  );
+  return stripped;
+};
 
 const [poxAddress, poxName] = POX5.split(".");
 const readPox = async (functionName, functionArgs = []) =>
@@ -166,7 +197,9 @@ async function resolveBondIndex() {
       // `.value` is null for `none`; unwrap() cannot be used here, because its
       // nullish chain falls through to the wrapper object and reads as truthy.
       const exists = (await readPox("get-protocol-bond", [Cl.uint(i)])).value != null;
-      return { index: i, height, cycle, exists };
+      const granted =
+        (await readPox("get-bond-allowance", [Cl.uint(i), Cl.principal(`${DEPLOYER}.${POOL}`)])).value != null;
+      return { index: i, height, cycle, exists, granted };
     }
   }
   throw new Error(`no bond index starts at burn height ${GENESIS_BURN_HEIGHT}`);
@@ -181,73 +214,46 @@ async function readBondAdmin() {
   return cvToString(hexToCV(data));
 }
 
-/** The signature `register-self` needs, over pox-5's own message hash. */
-async function signerGrant(contractId) {
-  const messageHash = String(
-    unwrap(
-      await readPox("get-signer-grant-message-hash", [
-        Cl.principal(contractId),
-        Cl.uint(AUTH_ID),
-      ]),
-    ),
-  ).replace(/^0x/, "");
-  return {
-    publicKey: privateKeyToPublic(SIGNER_KEY),
-    signature: signMessageHashRsv({ messageHash, privateKey: SIGNER_KEY }),
-  };
-}
-
 /**
  * Everything up to a bound bond: publish, register the signer manager, have
  * the bond admin allowlist us, initialize, bind.
  */
-function launch(builder, { bond, admin, grant, poolId, managerId }) {
+function launch(builder, { bond, admin, poolId, managerId }) {
+  builder
+    .withSender(DEPLOYER)
+    .addContractDeploy({ contract_name: TREASURY, source_code: contract(TREASURY), fee: 0, clarity_version: CLARITY })
+    .addContractDeploy({ contract_name: POOL, source_code: contract(POOL), fee: 0, clarity_version: CLARITY })
+    .addContractDeploy({ contract_name: BRIDGE, source_code: contract(BRIDGE), fee: 0, clarity_version: CLARITY })
+    .addContractDeploy({ contract_name: DAO, source_code: contract(DAO), fee: 0, clarity_version: CLARITY });
+
+  // The whitelisting transaction, only when the chain has not done it: the
+  // bond admin creates the bond and puts the pool on its allowlist. pox-5 keys
+  // an allowance on the staker's principal and only ever inserts it here, so a
+  // pool missing from this list can never stake into this bond -- there is no
+  // adding it later. On the genesis bond that has happened for real.
+  if (!bond.exists) {
+    builder.withSender(admin).addContractCall({
+      contract_id: POX5,
+      function_name: "setup-bond",
+      function_args: [
+        Cl.uint(bond.index),
+        Cl.uint(BOND.targetRate),
+        Cl.uint(BOND.stxValueRatio),
+        Cl.uint(BOND.minUstxRatio),
+        Cl.bufferFromHex("00"), // early-unlock script; the sBTC path ignores it
+        Cl.list([
+          Cl.tuple({
+            staker: Cl.principal(poolId),
+            "max-sats": Cl.uint(BOND.allowanceSats),
+          }),
+        ]),
+      ],
+      fee: 0,
+    });
+  }
+
   return (
     builder
-      .withSender(DEPLOYER)
-      .addContractDeploy({ contract_name: MANAGER, source_code: managerSource(), fee: 0, clarity_version: CLARITY })
-      .addContractDeploy({ contract_name: "bond-treasury", source_code: contract("bond-treasury"), fee: 0, clarity_version: CLARITY })
-      .addContractDeploy({ contract_name: POOL, source_code: contract(POOL), fee: 0, clarity_version: CLARITY })
-      .addContractDeploy({ contract_name: "bond-bridge", source_code: contract("bond-bridge"), fee: 0, clarity_version: CLARITY })
-      .addContractDeploy({ contract_name: "esbee-dao", source_code: contract("esbee-dao"), fee: 0, clarity_version: CLARITY })
-
-      // The signer manager has to be registered with pox-5 before `initialize`
-      // will accept it.
-      .addContractCall({
-        contract_id: managerId,
-        function_name: "register-self",
-        function_args: [
-          Cl.principal(managerId),
-          Cl.bufferFromHex(grant.publicKey),
-          Cl.uint(AUTH_ID),
-          Cl.bufferFromHex(grant.signature),
-        ],
-        fee: 0,
-      })
-
-      // The whitelisting transaction: the bond admin creates the bond and puts
-      // the pool on its allowlist. pox-5 keys an allowance on the staker's
-      // principal and only ever inserts it here, so a pool missing from this
-      // list can never stake into this bond -- there is no adding it later.
-      .withSender(admin)
-      .addContractCall({
-        contract_id: POX5,
-        function_name: "setup-bond",
-        function_args: [
-          Cl.uint(bond.index),
-          Cl.uint(BOND.targetRate),
-          Cl.uint(BOND.stxValueRatio),
-          Cl.uint(BOND.minUstxRatio),
-          Cl.bufferFromHex("00"), // early-unlock script; the sBTC path ignores it
-          Cl.list([
-            Cl.tuple({
-              staker: Cl.principal(poolId),
-              "max-sats": Cl.uint(BOND.allowanceSats),
-            }),
-          ]),
-        ],
-        fee: 0,
-      })
       .addReads([{ EvalReadonly: [DEPLOYER, "", POX5, `(get-bond-allowance u${bond.index} '${poolId})`] }])
 
       .withSender(DEPLOYER)
@@ -255,6 +261,12 @@ function launch(builder, { bond, admin, grant, poolId, managerId }) {
         contract_id: poolId,
         function_name: "initialize",
         function_args: [Cl.principal(managerId), Cl.principal(DEPLOYER)],
+        fee: 0,
+      })
+      .addContractCall({
+        contract_id: poolId,
+        function_name: "update-operator",
+        function_args: [Cl.principal(`${DEPLOYER}.${DAO}`), Cl.bool(true)],
         fee: 0,
       })
       // No index and no allocation: the call takes neither. It walks to the
@@ -278,7 +290,7 @@ function fund(builder, { member, sats }) {
     // only way to conjure it: `protocol-mint` is gated to the sBTC protocol.
     .addEvalCode(SBTC, `(ft-mint? sbtc-token u${sats} '${member})`)
     .withSender(FUNDER)
-    .addSTXTransfer({ recipient: member, amount: 200_000_000, fee: 0 });
+    .addSTXTransfer({ recipient: member, amount: MEMBER_USTX, fee: 0 });
 }
 
 async function main() {
@@ -304,10 +316,15 @@ async function main() {
   const bond = await resolveBondIndex();
   const admin = await readBondAdmin();
   const poolId = `${DEPLOYER}.${POOL}`;
-  const managerId = `${DEPLOYER}.${MANAGER}`;
-  const grant = await signerGrant(managerId);
+  const managerId = MANAGER_ID;
+  if (bond.exists && !bond.granted) {
+    throw new Error(`bond ${bond.index} is set up and does not allowlist ${poolId}`);
+  }
 
-  const stakeOpensAt = bond.height - 288; // STAKE_WINDOW
+  // The window closes where the prepare phase opens and runs STAKE_WINDOW
+  // blocks before that -- the pool's own arithmetic, with pox-5's prepare length.
+  const prepare = Number(unwrap(await readPox("get-pox-info")).value?.["prepare-cycle-length"] ?? 100);
+  const stakeOpensAt = bond.height - prepare - 288;
   // A couple of blocks inside the window rather than exactly on its edge: the
   // window is 288 wide, so the margin costs nothing and absorbs any further
   // drift between the pinned block and the tip.
@@ -319,8 +336,10 @@ mainnet stacks tip  : ${info.stacks_tip_height}
 pinned at           : stacks ${pinnedHeight}, burn ${pinned.burn_block_height}
 genesis bond        : index ${bond.index}, starts ${bond.height}, cycle ${bond.cycle}
   already set up?   : ${bond.exists ? "yes" : "no -- the simulation creates it"}
+  allowlists us?    : ${bond.granted ? "yes" : "no -- the simulation grants it"}
 bond admin          : ${admin}
 pool                : ${poolId}
+signer manager      : ${managerId}
 stake window opens  : ${stakeOpensAt}
 burn blocks to skip : ${advance}
 `);
@@ -335,7 +354,7 @@ burn blocks to skip : ${advance}
 
   const builder = SimulationBuilder.new({ network: "mainnet" })
     .useBlockHeight(pinnedHeight)
-    .pipe((b) => launch(b, { bond, admin, grant, poolId, managerId }))
+    .pipe((b) => launch(b, { bond, admin, poolId, managerId }))
     .pipe((b) => fund(b, { member: DEPLOYER, sats: MEMBER_SATS }));
 
   builder.withSender(DEPLOYER);
@@ -349,9 +368,9 @@ burn blocks to skip : ${advance}
       fee: 0,
     });
   } else {
-    // In over L1: commit to the address the bitcoin will come from, wait a burn
-    // block, reveal it, then have the sBTC signers sweep the deposit to the
-    // treasury and complete it.
+    // In over L1: commit to the address the bitcoin will come from, wait
+    // REVEAL_DELAY burn blocks, reveal it, then have the sBTC signers sweep the
+    // deposit to the treasury and complete it.
     //
     // The deposit and its parent are built here rather than taken from bitcoin
     // because nothing is broadcast: what `complete-btc-deposit` checks is that
@@ -374,8 +393,8 @@ burn blocks to skip : ${advance}
       [{ value: MEMBER_SATS, script: scriptFor("05", "ee".repeat(32)) }],
     );
     const txid = txidOf(tx);
-    const bridgeId = `${DEPLOYER}.bond-bridge`;
-    const treasuryId = `${DEPLOYER}.bond-treasury`;
+    const bridgeId = `${DEPLOYER}.${BRIDGE}`;
+    const treasuryId = `${DEPLOYER}.${TREASURY}`;
     builder
       .addReads([{ EvalReadonly: [DEPLOYER, "", bridgeId, `(get-address-digest { version: 0x04, hashbytes: 0x${hashbytes} } 0x${salt})`] }])
       .addContractCall({
@@ -387,7 +406,7 @@ burn blocks to skip : ${advance}
         ],
         fee: 0,
       })
-      .addAdvanceBlocks({ bitcoin_blocks: 1, stacks_blocks_per_bitcoin: 1 })
+      .addAdvanceBlocks({ bitcoin_blocks: REVEAL_DELAY, stacks_blocks_per_bitcoin: 1 })
       .addContractCall({
         contract_id: bridgeId,
         function_name: "reveal-btc-address",
@@ -417,7 +436,7 @@ burn blocks to skip : ${advance}
            recipient: '${treasuryId},
            sweep-txid: 0x${"cd".repeat(32)},
            sweep-burn-hash: 0x${"ef".repeat(32)},
-           sweep-burn-height: u${pinned.burn_block_height + 2},
+           sweep-burn-height: u${pinned.burn_block_height + REVEAL_DELAY + 1},
          })`,
       )
       .addContractCall({

@@ -22,8 +22,10 @@
     "fuzz:test:v1": "node v1/scripts/build-rendezvous.mjs && rv ./v1 bond-staker test",
     "build:testnet": "node scripts/build-network.mjs testnet",
     "build:mainnet": "node scripts/build-network.mjs mainnet",
-    "plan:testnet": "node scripts/make-testnet-plan.mjs",
-    "probe:testnet": "node scripts/probe-testnet.mjs",
+    "plan:testnet": "node scripts/make-plan.mjs testnet",
+    "plan:mainnet": "node scripts/make-plan.mjs mainnet",
+    "probe:testnet": "node scripts/probe-chain.mjs testnet",
+    "probe:mainnet": "node scripts/probe-chain.mjs mainnet",
     "simulate:genesis": "node scripts/build-network.mjs mainnet && node scripts/simulate-mainnet.mjs genesis",
     "simulate:bridge": "node scripts/build-network.mjs mainnet && node scripts/simulate-mainnet.mjs bridge"
   },

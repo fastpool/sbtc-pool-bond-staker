@@ -272,6 +272,80 @@ describe("bond-staker: what leaving early costs", () => {
     expect(Number(empty["at-risk-rewards"])).toBe(0);
   });
 
+  // The last shares out take the epoch's denominator with them: a pot that
+  // has arrived but not been recognised could never be split afterwards, so
+  // the last leaver is sent to `sync-rewards` first -- and gets the pot.
+  it("refuses to take the last shares out while a pot is waiting", () => {
+    expect(unstakeEarly(alice, ALICE_SATS).type).toBe("ok");
+    payRewards(deployer, 3_000_000);
+
+    expect(Number(earlyUnstakePreview(bob)["at-risk-rewards"])).toBe(3_000_000);
+    expect(earlyUnstakePreview(bob)["sync-first"]).toBe(true);
+    expect(unstakeEarly(bob, BOB_SATS)).toBeErr(Cl.uint(131)); // REWARDS_PENDING
+
+    // Taking part of it is still fine: shares remain to split by.
+    expect(unstakeEarly(bob, 1_000_000).type).toBe("ok");
+    expect(unstakeEarly(bob, BOB_SATS - 1_000_000)).toBeErr(Cl.uint(131));
+
+    // The integer split leaves a sat behind on the first pass; the preview
+    // still says so, because a second pass can pick it up.
+    expect(syncRewards(carol).type).toBe("ok");
+    expect(claimableRewards(bob)).toBe(2_999_999);
+    expect(Number(earlyUnstakePreview(bob)["at-risk-rewards"])).toBe(1);
+    expect(earlyUnstakePreview(bob)["sync-first"]).toBe(true);
+    expect(unstakeEarly(bob, BOB_SATS - 1_000_000)).toBeErr(Cl.uint(131));
+    expect(syncRewards(carol).type).toBe("ok");
+    expect(earlyUnstakePreview(bob)["sync-first"]).toBe(false);
+    expect(unstakeEarly(bob, BOB_SATS - 1_000_000).type).toBe("ok");
+    expect(Number(epoch(0)["total-shares"])).toBe(0);
+
+    expect(claimableRewards(bob)).toBe(3_000_000);
+    expect(claimableRewards(alice)).toBe(0);
+    expect(claimRewards(bob).type).toBe("ok");
+  });
+
+  it("lets the last member go when nothing is waiting", () => {
+    expect(unstakeEarly(alice, ALICE_SATS).type).toBe("ok");
+    expect(earlyUnstakePreview(bob)["sync-first"]).toBe(false);
+    expect(unstakeEarly(bob, BOB_SATS).type).toBe("ok");
+    expect(Number(epoch(0)["total-shares"])).toBe(0);
+  });
+
+  // A sat that the shares cannot divide is not a pot anyone can recognise:
+  // `sync-rewards` refuses it, so it must not keep the last leaver in.
+  it("lets the last member go past dust no sync could credit", () => {
+    expect(unstakeEarly(alice, ALICE_SATS).type).toBe("ok");
+    payRewards(deployer, 1); // 29e6 shares cannot split 1 sat at 1e12 precision
+
+    expect(Number(earlyUnstakePreview(bob)["at-risk-rewards"])).toBe(1);
+    expect(earlyUnstakePreview(bob)["sync-first"]).toBe(false);
+    expect(syncRewards(carol)).toBeErr(Cl.uint(114)); // NOTHING_TO_CLAIM
+    expect(unstakeEarly(bob, BOB_SATS).type).toBe("ok");
+    expect(Number(epoch(0)["total-shares"])).toBe(0);
+  });
+
+  it("does not stand in the way while an earlier epoch is the one paying", () => {
+    // Roll both into the next bond: epoch 1 is live, epoch 0 still paying.
+    setupBond(NEXT_BOND_INDEX);
+    bindNextBond();
+    advanceToBurnHeight(bondStartHeight(NEXT_BOND_INDEX) - 288);
+    expect(stake().type).toBe("ok");
+    avoidPreparePhase();
+    expect(rewardEpoch()).toBe(0);
+
+    payRewards(deployer, 4_000_000);
+    // The pot belongs to epoch 0 and is split by epoch 0's shares, so
+    // emptying epoch 1 loses nobody anything.
+    expect(earlyUnstakePreview(bob)["sync-first"]).toBe(false);
+    expect(unstakeEarly(alice, ALICE_SATS).type).toBe("ok");
+    expect(unstakeEarly(bob, BOB_SATS).type).toBe("ok");
+    expect(Number(epoch(1)["total-shares"])).toBe(0);
+
+    expect(syncRewards().type).toBe("ok");
+    expect(claimableRewards(alice)).toBe((4_000_000 * ALICE_SATS) / POOL_SATS);
+    expect(claimableRewards(bob)).toBe((4_000_000 * BOB_SATS) / POOL_SATS);
+  });
+
   it("reports nothing at risk while an earlier epoch is still the one paying", () => {
     // Carol joins at the roll, so epoch 1 has a different membership and a
     // different denominator from epoch 0.

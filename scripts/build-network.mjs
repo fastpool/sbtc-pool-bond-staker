@@ -22,21 +22,25 @@
 //
 // The pool's name is forced by the protocol. pox-5 keys a bond's allowlist on
 // the staker's *principal*, and a grant is only ever inserted by `setup-bond`
-// -- so a pool published under a name no grant mentions can never stake. The
-// testnet grants so far spell `<deployer>.vault-1` and `<deployer>.vault-2`,
-// and both are published: `vault-1` is the pool as it was before members could
-// unstake mid-term (kept under `v1/`), `vault-2` the one before binding became
-// permissionless. Neither ever staked. The third pool is `vault-3`, and its
-// grant is a request to the bond admin -- see TESTNET.md.
+// -- so a pool published under a name no grant mentions can never stake, and
+// the pool is called whatever its grant spells:
+//
+//   mainnet   the genesis bond's allowlist names `<deployer>.esbee-dao-bond-staker-1`
+//   testnet   the grants so far spell `vault-1` and `vault-2`, and both are
+//             published -- `vault-1` is the pool before members could unstake
+//             mid-term (kept under `v1/`), `vault-2` the one before binding
+//             became permissionless; neither ever staked. The third pool is
+//             `vault-3`, and its grant is a request to the bond admin.
 //
 // Its three siblings are forced by something duller: a contract name can never
-// be reused at an address, and `bond-treasury`, `bond-bridge` and `esbee-dao`
-// were published alongside `vault-1`, their `-2` copies alongside `vault-2`.
-// Each is wired to its pool by a constant that cannot be re-pointed, so a new
-// pool needs three of its own. They take a `-3` suffix to match, and nothing
-// about them changes but the name.
+// be reused at an address, and on testnet `bond-treasury`, `bond-bridge` and
+// `esbee-dao` were published alongside `vault-1`, their `-2` copies alongside
+// `vault-2`. Each is wired to its pool by a constant that cannot be re-pointed,
+// so a new pool needs three of its own. They take the pool's generation number
+// as a suffix -- `-1` on mainnet, `-3` on testnet -- and nothing about them
+// changes but the name. See MAINNET.md and TESTNET.md.
 //
-//   node scripts/build-network.mjs mainnet    -> bond-staker.clar, bond-treasury.clar, ...
+//   node scripts/build-network.mjs mainnet    -> esbee-dao-bond-staker-1.clar, bond-treasury-1.clar, ...
 //   node scripts/build-network.mjs testnet    -> vault-3.clar, bond-treasury-3.clar, ...
 //   node scripts/build-network.mjs testnet --staker-name vault-4 --suffix -4
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
@@ -125,13 +129,13 @@ const STAKER = "bond-staker";
 const SIBLINGS = ["bond-treasury", "bond-bridge", "esbee-dao"];
 
 // `staker` is the pool's published name; `suffix` is appended to each of the
-// three siblings. Mainnet publishes everything under its source name.
+// three siblings.
 const TARGETS = {
   mainnet: {
     sbtc: SOURCE.sbtc,
     pox5: "SP000000000000000000002Q6VF78",
-    staker: STAKER,
-    suffix: "",
+    staker: "esbee-dao-bond-staker-1",
+    suffix: "-1",
   },
   testnet: {
     sbtc: "SN3VMHXEN64ZZF71JQ5VESXDWTR301XTTXGF4J8F1",

@@ -138,7 +138,7 @@ Done. For the record:
    longer has the function. `testnet-withdraw-vault-2.yaml` takes our deposit
    back out of the old pool.
 
-3. **The chain can be re-read in one command.** `scripts/probe-testnet.mjs`
+3. **The chain can be re-read in one command.** `scripts/probe-chain.mjs`
    prints the burn height, the bonds around it with their grants and bind
    deadlines worked out the way `bind-next-bond` works them out, and where
    each published pool stands. `pnpm run probe:testnet`.
