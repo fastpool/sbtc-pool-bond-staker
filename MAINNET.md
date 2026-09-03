@@ -9,7 +9,7 @@ short: the pool has to be published, initialized *and bound* by **burn height
 965386**, or the genesis bond leaves without it and the next chance is bond 2,
 which nobody has set up yet.
 
-Everything below was re-read off mainnet at **burn height 965322**. Heights
+Everything below was re-read off mainnet at **burn height 965357**. Heights
 move; re-check with `pnpm run probe:mainnet` before acting on any of them.
 
 ## What is already on chain
@@ -20,18 +20,21 @@ move; re-check with `pnpm run probe:mainnet` before acting on any of them.
 | sBTC | `SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4` |
 | signer manager | `SPMPMA1V6P430M8C91QS1G9XJ95S59JS1TZFZ4Q4.fastpool-max500-signer-manager` — the published Fast Pool manager, registered with pox-5, so `initialize` will accept it |
 | bond admin | `SP72DMR3MJKS7RVBY33JVV7EEJSQ1PYDVKDP10FX` — the only principal `setup-bond` accepts |
-| our address | `SPFCGF789WX1B737VQYAQ6BG3QYVMJGPDKRKYK00` — 99.56 STX, no sBTC |
+| our address | `SPFCGF789WX1B737VQYAQ6BG3QYVMJGPDKRKYK00` — 99.21 STX, no sBTC |
 
 | bond | starts (burn) | cycle | set up | allowlist | staked |
 | --- | --- | --- | --- | --- | --- |
 | 0 | 962150 | 141 | no | — | started without anyone |
-| **1** | **966350** | **143** | **yes** | **`esbee-dao-bond-staker-1`: 5 BTC** | 450 000 sats, not ours |
+| **1** | **966350** | **143** | **yes** | **`esbee-dao-bond-staker-1`: 5 BTC** | 5.0045 BTC, none of it ours |
 | 2 | 970550 | 145 | no | — | — |
 | 3–6 | 974750 … 987350 | 147 … 153 | no | — | — |
 
 The genesis bond is index 1, not 0 — index 0 would have started a cycle
-earlier and nobody set it up. Its terms are `target-rate = 300`,
-`stx-value-ratio = 310237`, `min-ustx-ratio = 500`: the STX leg costs
+earlier and nobody set it up. Another staker has since put 5 BTC into it;
+that does not crowd us out, because pox-5 caps stakers per name through the
+allowlist, not the bond as a whole (`get-protocol-bond` has no total). Its
+terms are `target-rate = 300`, `stx-value-ratio = 310237`, `min-ustx-ratio =
+500`: the STX leg costs
 **155.1185 STX per 0.01 BTC** (about 15 512 STX per whole BTC). The contract
 reads all of this from pox-5 at run time; nothing is configured.
 
@@ -43,14 +46,14 @@ up before burn 987350. Not urgent; noted under [Later](#later).
 ## The clock
 
 Derived from the pool's constants and pox-5's prepare length, at 10 minutes a
-block from 965322:
+block from 965357:
 
 | what | burn height | blocks away | roughly |
 | --- | --- | --- | --- |
-| **bind deadline** (`bind-next-bond` must have landed) | **965386** | **64** | **~11 h** |
-| notice ends, stake window opens | 965962 | 640 | 4.4 days |
-| stake window closes (prepare phase opens) | 966250 | 928 | 6.4 days |
-| bond starts | 966350 | 1028 | 7.1 days |
+| **bind deadline** (`bind-next-bond` must have landed) | **965386** | **29** | **~5 h** |
+| notice ends, stake window opens | 965962 | 605 | 4.2 days |
+| stake window closes (prepare phase opens) | 966250 | 893 | 6.2 days |
+| bond starts | 966350 | 993 | 6.9 days |
 | bond unlocks / bond 7 starts | 991550 | | ~6 months |
 
 The bind deadline is start − prepare − `STAKE_WINDOW` − `BIND_NOTICE` =
@@ -65,11 +68,11 @@ how much), and every deposit can be withdrawn in full until `stake` is called.
 
 - `pnpm test`: the full simnet suite, green.
 - `pnpm run simulate:genesis` and `pnpm run simulate:bridge`: stxer dry runs
-  against a fork of mainnet pinned at burn 965322, all steps clean. Deploy the
+  against a fork of mainnet pinned at burn 965357, all steps clean. Deploy the
   six `-1` contracts, `initialize` with the real manager, `bind-next-bond`
   lands on bond 1 under the real grant (`max-sats u500000000`), a 0.01 BTC
   deposit asks for `u155118500` uSTX, and `stake` at 965964 goes into bond 1
-  with pox-5 reporting 1 450 000 sats staked and our membership. Nothing was
+  with pox-5 reporting 501 450 000 sats staked and our membership. Nothing was
   signed or broadcast.
 - `pnpm run probe:mainnet`: the bond, grant and free names above.
 
