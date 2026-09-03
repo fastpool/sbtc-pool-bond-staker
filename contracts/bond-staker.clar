@@ -696,10 +696,12 @@
       (is-some (contract-call? 'ST000000000000000000002AMW42H.pox-5 get-protocol-bond
         index
       ))
-      (> (default-to u0
-        (contract-call? 'ST000000000000000000002AMW42H.pox-5 get-bond-allowance
-          index current-contract
-        )) u0
+      (>
+        (default-to u0
+          (contract-call? 'ST000000000000000000002AMW42H.pox-5 get-bond-allowance
+            index current-contract
+          ))
+        u0
       )
       (<= (+ burn-block-height BIND_NOTICE) opens)
     )
@@ -830,7 +832,10 @@
         ))
       )
       ;; Both hold by construction of `find-next-bond`; asserted for readers.
-      (asserts! (<= (+ burn-block-height BIND_NOTICE) (stake-window-start-of start-height))
+      (asserts!
+        (<= (+ burn-block-height BIND_NOTICE)
+          (stake-window-start-of start-height)
+        )
         ERR_TOO_LATE
       )
       (asserts!
@@ -1089,8 +1094,9 @@
             (let ((unstaked (try! (contract-call? 'ST000000000000000000002AMW42H.pox-5 unstake-sbtc
                 manager sats
               ))))
-              (try! (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
-                transfer sats tx-sender .bond-treasury none
+              (try! (contract-call?
+                'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token transfer
+                sats tx-sender .bond-treasury none
               ))
               unstaked
             ))))
@@ -1399,18 +1405,18 @@
 ;; The `sync-rewards` arithmetic: new index, new credited total and the amount
 ;; recognised. Zero when `total-shares` is 0 or the surplus is sub-share dust.
 (define-private (reward-split (record {
-    bond-index: uint,
-    first-reward-cycle: uint,
-    unlock-burn-height: uint,
-    staked-at-height: uint,
-    staked-sats: uint,
-    staked-ustx: uint,
-    eligible-sats: uint,
-    total-shares: uint,
-    reward-index: uint,
-    credited: uint,
-    credit-offset: uint,
-  }))
+  bond-index: uint,
+  first-reward-cycle: uint,
+  unlock-burn-height: uint,
+  staked-at-height: uint,
+  staked-sats: uint,
+  staked-ustx: uint,
+  eligible-sats: uint,
+  total-shares: uint,
+  reward-index: uint,
+  credited: uint,
+  credit-offset: uint,
+}))
   (let (
       (shares (get total-shares record))
       (delta (if (> shares u0)
@@ -1904,7 +1910,7 @@
 ;; One catch-up step: close `settled-epoch`, move into the next. Stops at an
 ;; epoch still open.
 (define-private (advance-epoch
-    (step uint)
+    (step_ uint)
     (state {
       record: {
         shares: uint,
@@ -2615,8 +2621,12 @@
     ;; Principal moves between buckets, never created or lost.
     (asserts!
       (is-eq
-        (+ (get bonded-sats settled) (get queued-sats settled) (get released-sats settled))
-        (+ (get bonded-sats record) (get queued-sats record) (get released-sats record)))
+        (+ (get bonded-sats settled) (get queued-sats settled)
+          (get released-sats settled)
+        )
+        (+ (get bonded-sats record) (get queued-sats record)
+          (get released-sats record)
+        ))
       (err u2904)
     )
     (ok true)

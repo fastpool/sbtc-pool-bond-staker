@@ -371,8 +371,7 @@
   )
   (let ((value (buff-to-uint-be byte)))
     (unwrap-panic (as-max-len?
-      (concat acc (hex-digit (/ value u16)) (hex-digit (mod value u16)))
-      u40
+      (concat acc (hex-digit (/ value u16)) (hex-digit (mod value u16))) u40
     ))
   )
 )
@@ -393,9 +392,7 @@
 ;; What a wallet's `signmessage` hashes for that message: double sha256 over
 ;; prefix, length and message.
 (define-read-only (get-address-claim-digest (member principal))
-  (sha256 (sha256
-    (concat BTC_SIGNED_MESSAGE CLAIM_LENGTH (get-address-claim-message member))
-  ))
+  (sha256 (sha256 (concat BTC_SIGNED_MESSAGE CLAIM_LENGTH (get-address-claim-message member))))
 )
 
 ;; Whether `claim-btc-address` takes the shape: p2pkh, p2sh-p2wpkh, p2wpkh.

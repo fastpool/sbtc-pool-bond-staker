@@ -103,10 +103,11 @@
       (contract-call? .bond-staker get-unrecognized-rewards)
     )
     (let ((response (contract-call? .bond-staker sync-rewards)))
-      (var-set last-sync-response (match response
-        synced (ok true)
-        error (err error)
-      ))
+      (var-set last-sync-response
+        (match response
+          synced (ok true)
+          error (err error)
+        ))
       (if (var-get propagate)
         (begin
           (try! response)

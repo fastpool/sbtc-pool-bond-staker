@@ -16,10 +16,10 @@
 ;;; SIP-010
 
 (define-public (transfer
-    (amount uint)
-    (sender principal)
-    (recipient principal)
-    (memo (optional (buff 34)))
+    (amount_ uint)
+    (sender_ principal)
+    (recipient_ principal)
+    (memo_ (optional (buff 34)))
   )
   ERR_NOT_TRANSFERABLE
 )
