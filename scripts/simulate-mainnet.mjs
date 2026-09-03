@@ -69,11 +69,14 @@ const CLARITY = ClarityVersion.Clarity6;
 const NAMES = {
   "esbee-dao-bond-staker-1": "bond-staker",
   "bond-treasury-1": "bond-treasury",
+  "iou-bond-btc-1": "iou-bond-btc",
+  "iou-bond-stx-1": "iou-bond-stx",
   "bond-bridge-1": "bond-bridge",
   "esbee-dao-1": "esbee-dao",
 };
 const POOL = "esbee-dao-bond-staker-1";
 const TREASURY = "bond-treasury-1";
+const RECEIPTS = ["iou-bond-btc-1", "iou-bond-stx-1"];
 const BRIDGE = "bond-bridge-1";
 const DAO = "esbee-dao-1";
 
@@ -221,7 +224,11 @@ async function readBondAdmin() {
 function launch(builder, { bond, admin, poolId, managerId }) {
   builder
     .withSender(DEPLOYER)
-    .addContractDeploy({ contract_name: TREASURY, source_code: contract(TREASURY), fee: 0, clarity_version: CLARITY })
+    .addContractDeploy({ contract_name: TREASURY, source_code: contract(TREASURY), fee: 0, clarity_version: CLARITY });
+  for (const name of RECEIPTS) {
+    builder.addContractDeploy({ contract_name: name, source_code: contract(name), fee: 0, clarity_version: CLARITY });
+  }
+  builder
     .addContractDeploy({ contract_name: POOL, source_code: contract(POOL), fee: 0, clarity_version: CLARITY })
     .addContractDeploy({ contract_name: BRIDGE, source_code: contract(BRIDGE), fee: 0, clarity_version: CLARITY })
     .addContractDeploy({ contract_name: DAO, source_code: contract(DAO), fee: 0, clarity_version: CLARITY });

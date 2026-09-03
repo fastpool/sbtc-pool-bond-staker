@@ -34,17 +34,46 @@ the built artefact against it.
 | contract | role |
 | --- | --- |
 | `bond-treasury` | holds the pooled sBTC principal |
+| `iou-bond-btc`, `iou-bond-stx` | receipts: a member's principal, as a token their wallet shows |
 | `bond-staker` | the ledger: deposits, shares, the bond position, rewards |
 | `bond-bridge` | the L1 bitcoin on-ramp and off-ramp |
 | `esbee-dao` | optional: the operator seat, held by the members |
 
 Deploy in that order — each calls the ones above it and is called by none of
-them, so there is no cycle to break. `bond-treasury` names its two callers as
-principal values, which do not have to exist yet.
+them, so there is no cycle to break. `bond-treasury` and the receipts name
+their callers as principal values, which do not have to exist yet.
 
 Because the principal lives in the treasury, any sBTC `bond-staker` holds is
 reward — there is no reserve to net off before splitting a payout. The STX leg
 is the exception: pox-5 locks the *staker's* STX, so the pool holds it.
+
+### Receipts
+
+A member's sBTC leaves their wallet at `deposit` and comes back at
+`claim-principal`, possibly a year later. In between, `iou-bond-btc` (`bondBTC`,
+8 decimals) and `iou-bond-stx` (`bondSTX`, 6 decimals) show where it is: a
+member's balance is their principal on the pool's books — queued, bonded or
+released, priced as deposited — and a second balance, `get-locked-balance`,
+is what they have sitting in an sBTC withdrawal request over the bridge.
+Supply equals the pool's totals at every block:
+
+    bondBTC supply        = queued-sats + bonded-sats + released-sats
+    bondBTC locked supply = withdrawing-sats
+    bondSTX supply        = queued-ustx + bonded-ustx + released-ustx
+
+Only `bond-staker` mints or burns them, at the four places a claim changes
+hands: booking a deposit (direct or bridged), paying principal out on Stacks,
+handing released sats to the bridge (`lock`), and the signers' verdict on that
+request (`burn-locked` on accepted, `unlock` on rejected). Rolls, haircuts and
+early exits only move principal between the pool's books, so they never touch
+a receipt. Rewards are not principal and have no receipt.
+
+The tokens are SIP-010 for wallets to read, and nothing more: `transfer`
+always fails. A receipt is a mirror of the ledger, not a claim that can be
+sold, so it follows the member and only the member. One consequence for
+front-ends: `claim-principal` and `claim-principal-to-btc` burn from the
+member, so a transaction the member signs in deny mode needs an FT
+post-condition for the receipt as well as for the sBTC.
 
 ## The three quantities
 
@@ -567,7 +596,7 @@ floor had no good owner. It could not be the DAO, which cannot vote before the
 pool has staked, and leaving it with the deployer key made the launch exactly
 the thing the rest of this is built to avoid.
 
-    a. deploy the four contracts
+    a. deploy the six contracts
     b. trust-signer-manager(hash) for each vetted signer manager
     c. update-operator(.esbee-dao, true)
     d. anyone calls bind-next-bond once the bond admin has allowlisted the pool
@@ -685,7 +714,8 @@ placeholders, so the syntax is there to read before you have an address;
 regenerating overwrites it in place (`--template` puts it back).
 
 The plan is three batches, each confirmed before the next: publish
-`bond-treasury`, the pool, `bond-bridge` and `esbee-dao` in dependency order;
+`bond-treasury`, the two receipts, the pool, `bond-bridge` and `esbee-dao` in
+dependency order;
 call `initialize`; then `update-operator(.esbee-dao, true)` to seat the DAO.
 The deployer takes the operator seat at `initialize` rather than the DAO
 because the DAO cannot vote until the pool has staked — see the launch sequence
@@ -695,7 +725,7 @@ The deployer address is a required argument because it appears throughout and
 `initialize` only accepts the contract's own deployer — a half-substituted plan
 would deploy under one identity and initialize under another. Publish fees are
 sized from the contract bytes at the fee rate in `settings/Testnet.toml`, and
-come to about 1.8 STX for the whole plan.
+come to about 1.3 STX for the whole plan.
 
 ### The pool's name is per network
 
@@ -705,7 +735,7 @@ inserted by `setup-bond` — so a pool published under a name no grant mentions
 can never stake, and the name is whatever the grant is asked for under. The
 grants so far spell `<deployer>.vault-1` and `<deployer>.vault-2`, and both
 names carry earlier pools that never staked, so the third is `vault-3` and
-needs a grant of its own — see [TESTNET.md](TESTNET.md). Its three siblings
+needs a grant of its own — see [TESTNET.md](TESTNET.md). Its siblings
 take a `-3` for a duller reason: a contract name cannot be reused at an
 address, and their unsuffixed and `-2` names are spent.
 
@@ -716,7 +746,7 @@ changes, and the tests are unaffected.
 
 **On mainnet the pool is `esbee-dao-bond-staker-1`**, because that is the name
 the genesis bond's `setup-bond` allowlisted (5 BTC, bond index 1). The siblings
-carry the same `-1` so the four contracts read as one deployment; the
+carry the same `-1` so the six contracts read as one deployment; the
 unsuffixed names were free, so this is a choice, not a constraint.
 `build:mainnet`, `plan:mainnet` and `Clarinet-mainnet.toml` agree on it.
 

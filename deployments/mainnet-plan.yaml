@@ -15,9 +15,21 @@ plan:
       path: build/mainnet/bond-treasury-1.clar
       clarity-version: 6
     - transaction-type: contract-publish
+      contract-name: iou-bond-btc-1
+      expected-sender: SPFCGF789WX1B737VQYAQ6BG3QYVMJGPDKRKYK00
+      cost: 50000
+      path: build/mainnet/iou-bond-btc-1.clar
+      clarity-version: 6
+    - transaction-type: contract-publish
+      contract-name: iou-bond-stx-1
+      expected-sender: SPFCGF789WX1B737VQYAQ6BG3QYVMJGPDKRKYK00
+      cost: 50000
+      path: build/mainnet/iou-bond-stx-1.clar
+      clarity-version: 6
+    - transaction-type: contract-publish
       contract-name: esbee-dao-bond-staker-1
       expected-sender: SPFCGF789WX1B737VQYAQ6BG3QYVMJGPDKRKYK00
-      cost: 648390
+      cost: 659610
       path: build/mainnet/esbee-dao-bond-staker-1.clar
       clarity-version: 6
     - transaction-type: contract-publish

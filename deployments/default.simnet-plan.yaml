@@ -87,6 +87,16 @@ plan:
       path: contracts/bond-treasury.clar
       clarity-version: 6
     - transaction-type: emulated-contract-publish
+      contract-name: iou-bond-btc
+      emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
+      path: contracts/iou-bond-btc.clar
+      clarity-version: 6
+    - transaction-type: emulated-contract-publish
+      contract-name: iou-bond-stx
+      emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
+      path: contracts/iou-bond-stx.clar
+      clarity-version: 6
+    - transaction-type: emulated-contract-publish
       contract-name: bond-staker
       emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
       path: contracts/bond-staker.clar

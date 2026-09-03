@@ -14,7 +14,7 @@
 # This file is the project context around it.
 #
 # If the pool is ever built under other names -- `build:testnet -- --staker-name
-# vault-4 --suffix -4`, to match a grant that spells something else -- the four
+# vault-4 --suffix -4`, to match a grant that spells something else -- the six
 # `[contracts.*]` sections below have to be renamed to match, both in their
 # headers and in their paths. The plan generator takes the same flags.
 #
@@ -49,12 +49,24 @@ epoch = "4.0"
 # and `build:testnet` names the contract to match. The existing grants spell
 # `vault-1` and `vault-2`, and both names carry earlier pools -- so `vault-3`
 # needs a grant of its own on a bond not yet set up. See TESTNET.md.
+# Receipt tokens for a member's principal, minted and burned by the pool.
+# Deployed before it; their reference back is only a principal value.
+[contracts.iou-bond-btc-3]
+path = "build/testnet/iou-bond-btc-3.clar"
+clarity_version = 6
+epoch = "4.0"
+
+[contracts.iou-bond-stx-3]
+path = "build/testnet/iou-bond-stx-3.clar"
+clarity_version = 6
+epoch = "4.0"
+
 [contracts.vault-3]
 path = "build/testnet/vault-3.clar"
 clarity_version = 6
 epoch = "4.0"
 
-# The L1 on- and off-ramp. It calls the two above, and neither calls it.
+# The L1 on- and off-ramp. It calls the pool and the treasury; neither calls it.
 [contracts.bond-bridge-3]
 path = "build/testnet/bond-bridge-3.clar"
 clarity_version = 6

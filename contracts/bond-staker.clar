@@ -1,7 +1,8 @@
 ;; Bitcoin Staking Bond staker: a pooled pox-5 bond staker.
 ;;
 ;; This contract is the pox-5 staker: allowlisted principal, sBTC and STX
-;; custodian towards pox-5. Members hold claims on this contract.
+;; custodian towards pox-5. Members hold claims on this contract, mirrored by
+;; the non-transferable receipts `iou-bond-btc` and `iou-bond-stx`.
 ;; Principal not held by pox-5 sits in `bond-treasury`; any sBTC held here is
 ;; reward. The STX leg is held here because pox-5 locks the staker's own STX.
 ;;
@@ -1613,6 +1614,7 @@
       (map-set members member (merge record { released-sats: u0 }))
       (var-set released-sats (- (var-get released-sats) locked))
       (var-set withdrawing-sats (+ (var-get withdrawing-sats) locked))
+      (try! (contract-call? .iou-bond-btc lock locked member))
       (ok locked)
     )
   )
@@ -1628,12 +1630,13 @@
     (try! (authorize-bridge))
     (var-set withdrawing-sats (- (var-get withdrawing-sats) sats))
     (if accepted
-      true
+      (try! (contract-call? .iou-bond-btc burn-locked sats member))
       (let ((record (settle (get-or-create-member member))))
         (map-set members member
           (merge record { released-sats: (+ (get released-sats record) sats) })
         )
         (var-set released-sats (+ (var-get released-sats) sats))
+        (try! (contract-call? .iou-bond-btc unlock sats member))
       )
     )
     (ok true)
@@ -1762,7 +1765,7 @@
     )
     (var-set queued-sats (+ (var-get queued-sats) sats))
     (var-set queued-ustx (+ (var-get queued-ustx) ustx))
-    (ok true)
+    (mint-receipts member sats ustx)
   )
 )
 
@@ -1773,6 +1776,7 @@
     (ustx uint)
   )
   (begin
+    (try! (burn-receipts recipient sats ustx))
     (if (> sats u0)
       (try! (contract-call? .bond-treasury payout sats recipient))
       u0
@@ -1781,6 +1785,44 @@
       (try! (as-contract? ((with-stx ustx))
         (try! (stx-transfer? ustx tx-sender recipient))
       ))
+      true
+    )
+    (ok true)
+  )
+)
+
+;; Receipt tokens mirror a member's principal: `iou-bond-btc` supply is
+;; queued + bonded + released sats, `iou-bond-stx` the same in ustx.
+(define-private (mint-receipts
+    (member principal)
+    (sats uint)
+    (ustx uint)
+  )
+  (begin
+    (if (> sats u0)
+      (try! (contract-call? .iou-bond-btc mint sats member))
+      true
+    )
+    (if (> ustx u0)
+      (try! (contract-call? .iou-bond-stx mint ustx member))
+      true
+    )
+    (ok true)
+  )
+)
+
+(define-private (burn-receipts
+    (member principal)
+    (sats uint)
+    (ustx uint)
+  )
+  (begin
+    (if (> sats u0)
+      (try! (contract-call? .iou-bond-btc burn sats member))
+      true
+    )
+    (if (> ustx u0)
+      (try! (contract-call? .iou-bond-stx burn ustx member))
       true
     )
     (ok true)
@@ -2325,6 +2367,22 @@
     (+ (var-get queued-sats)
       (+ (var-get released-sats) (var-get withdrawing-sats))
     ))
+)
+
+;; Receipts equal principal on the books; locked receipts equal withdrawing.
+;; #[env(simnet)]
+(define-read-only (invariant-receipts-match-principal)
+  (and
+    (is-eq (unwrap-panic (contract-call? .iou-bond-btc get-total-supply))
+      (+ (var-get queued-sats) (+ (var-get bonded-sats) (var-get released-sats)))
+    )
+    (is-eq (unwrap-panic (contract-call? .iou-bond-btc get-locked-supply))
+      (var-get withdrawing-sats)
+    )
+    (is-eq (unwrap-panic (contract-call? .iou-bond-stx get-total-supply))
+      (+ (var-get queued-ustx) (+ (var-get bonded-ustx) (var-get released-ustx)))
+    )
+  )
 )
 
 ;; The sweep reaches only what is above the books.

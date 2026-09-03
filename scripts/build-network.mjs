@@ -32,11 +32,12 @@
 //             became permissionless; neither ever staked. The third pool is
 //             `vault-3`, and its grant is a request to the bond admin.
 //
-// Its three siblings are forced by something duller: a contract name can never
-// be reused at an address, and on testnet `bond-treasury`, `bond-bridge` and
+// Its siblings are forced by something duller: a contract name can never be
+// reused at an address, and on testnet `bond-treasury`, `bond-bridge` and
 // `esbee-dao` were published alongside `vault-1`, their `-2` copies alongside
 // `vault-2`. Each is wired to its pool by a constant that cannot be re-pointed,
-// so a new pool needs three of its own. They take the pool's generation number
+// so a new pool needs its own set (the two `iou-bond-*` receipts included).
+// They take the pool's generation number
 // as a suffix -- `-1` on mainnet, `-3` on testnet -- and nothing about them
 // changes but the name. See MAINNET.md and TESTNET.md.
 //
@@ -126,10 +127,16 @@ const SOURCE = {
 // other. The leading dot is what makes a token a reference: the prose comments
 // say `bond-staker` too, and those are not.
 const STAKER = "bond-staker";
-const SIBLINGS = ["bond-treasury", "bond-bridge", "esbee-dao"];
+const SIBLINGS = [
+  "bond-treasury",
+  "bond-bridge",
+  "esbee-dao",
+  "iou-bond-btc",
+  "iou-bond-stx",
+];
 
 // `staker` is the pool's published name; `suffix` is appended to each of the
-// three siblings.
+// siblings.
 const TARGETS = {
   mainnet: {
     sbtc: SOURCE.sbtc,

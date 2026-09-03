@@ -102,13 +102,16 @@ if (!template && !NETWORKS[network].address.test(deployer ?? "")) {
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 // Dependency order, which is also the order Clarinet publishes them in: the
-// pool calls the treasury, the bridge calls both, and the DAO calls the pool.
-// Nothing calls the DAO, so it goes last.
+// pool calls the treasury and the two receipt tokens, the bridge calls the
+// pool and the treasury, and the DAO calls the pool. Nothing calls the DAO, so
+// it goes last.
 //
-// The three siblings carry the same suffix the build gave them.
+// The siblings carry the same suffix the build gave them.
 const DAO = `esbee-dao${suffix}`;
 const CONTRACTS = [
   `bond-treasury${suffix}`,
+  `iou-bond-btc${suffix}`,
+  `iou-bond-stx${suffix}`,
   staker,
   `bond-bridge${suffix}`,
   DAO,

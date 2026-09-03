@@ -60,19 +60,19 @@ The grants so far spell `STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM.vault-1` and
 `.vault-2`, and both names are taken — a contract name can never be reused at
 an address. So the third pool is **`vault-3`**, and the grant has to be asked
 for under that name. `pnpm run build:testnet` produces it by default: the name
-is a property of the network, not a flag to remember. Its three siblings take
+is a property of the network, not a flag to remember. Its siblings take
 a `-3` for the duller reason that their unsuffixed and `-2` names are spent
 too; see [What has to change](#what-has-to-change-in-the-repo).
 
-Checked, not assumed — all four free:
+Checked, not assumed — all six free:
 
 ```bash
 D=STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM
-for c in vault-3 bond-treasury-3 bond-bridge-3 esbee-dao-3; do
+for c in vault-3 bond-treasury-3 iou-bond-btc-3 iou-bond-stx-3 bond-bridge-3 esbee-dao-3; do
   curl -s -o /dev/null -w "$c %{http_code}\n" \
     https://api.testnet.hiro.so/v2/contracts/interface/$D/$c
 done
-# all four 404 at burn 12607
+# all four 404 at burn 12607; the two receipts were added later and are new names
 ```
 
 ## The ask: a bond with `vault-3` on it
@@ -127,7 +127,7 @@ Done. For the record:
    between them. `scripts/make-testnet-plan.mjs` and `Clarinet-testnet.toml`
    agree. Both scripts take `--staker-name` and, new, `--suffix`, so a fourth
    generation is `-- --staker-name vault-4 --suffix -4` to both rather than an
-   edit; the manifest's four `[contracts.*]` headers still have to be renamed
+   edit; the manifest's six `[contracts.*]` headers still have to be renamed
    by hand.
 
 2. **The plans are for the current source.** `deployments/testnet-plan.yaml`
@@ -168,7 +168,7 @@ Re-read at burn 12607.
 ## The runbook
 
 Publishing does not wait on the grant — the grant names a principal, and the
-principal exists the moment the name is chosen — so the four contracts can go
+principal exists the moment the name is chosen — so the six contracts can go
 up now, and the bond admin can read what they are granting to.
 
 ```bash
@@ -183,7 +183,7 @@ That plan is the launch. It runs three batches, each confirmed before the next:
 
 | batch | what |
 | --- | --- |
-| 0 | publishes `bond-treasury-3`, `vault-3`, `bond-bridge-3`, `esbee-dao-3`, in dependency order. The treasury and the bridge need no wiring: they identify each other through constants |
+| 0 | publishes `bond-treasury-3`, `iou-bond-btc-3`, `iou-bond-stx-3`, `vault-3`, `bond-bridge-3`, `esbee-dao-3`, in dependency order. The treasury, the receipts and the bridge need no wiring: they identify their callers through constants |
 | 1 | `initialize(ST1B38…signer-manager, <deployer>)` — deployer-only, once. Also trusts that manager's code hash with no notice period, since nobody has deposited yet |
 | 2 | `update-operator(<deployer>.esbee-dao-3, true)` — seats the DAO |
 

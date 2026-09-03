@@ -66,7 +66,7 @@ how much), and every deposit can be withdrawn in full until `stake` is called.
 - `pnpm test`: the full simnet suite, green.
 - `pnpm run simulate:genesis` and `pnpm run simulate:bridge`: stxer dry runs
   against a fork of mainnet pinned at burn 965322, all steps clean. Deploy the
-  four `-1` contracts, `initialize` with the real manager, `bind-next-bond`
+  six `-1` contracts, `initialize` with the real manager, `bind-next-bond`
   lands on bond 1 under the real grant (`max-sats u500000000`), a 0.01 BTC
   deposit asks for `u155118500` uSTX, and `stake` at 965964 goes into bond 1
   with pox-5 reporting 1 450 000 sats staked and our membership. Nothing was
@@ -85,17 +85,18 @@ been re-read.
     pnpm run plan:mainnet SPFCGF789WX1B737VQYAQ6BG3QYVMJGPDKRKYK00
 
 `build/mainnet/` gets `esbee-dao-bond-staker-1.clar`, `bond-treasury-1.clar`,
-`bond-bridge-1.clar` and `esbee-dao-1.clar`: the simnet blocks stripped, the
+`iou-bond-btc-1.clar`, `iou-bond-stx-1.clar`, `bond-bridge-1.clar` and
+`esbee-dao-1.clar`: the simnet blocks stripped, the
 pox-5 boot address left as mainnet's, every `.bond-staker` reference renamed.
 The plan generator writes `deployments/mainnet-plan.yaml` with three batches:
 
-1. publish the four contracts in dependency order (about 1.7 STX in fees at
+1. publish the six contracts in dependency order (about 1.3 STX in fees at
    10 µSTX/byte);
 2. `initialize('SPMPMA….fastpool-max500-signer-manager, 'SPFCGF…KRKYK00)` —
    manager and the deployer as first operator;
 3. `update-operator('SPFCGF…KRKYK00.esbee-dao-1, true)` — seat the DAO.
 
-`Clarinet-mainnet.toml` names the same four files. `settings/Mainnet.toml`
+`Clarinet-mainnet.toml` names the same six files. `settings/Mainnet.toml`
 (gitignored) holds the deployer's encrypted mnemonic and points at
 `https://api.hiro.so`.
 

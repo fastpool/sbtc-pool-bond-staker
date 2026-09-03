@@ -15,7 +15,7 @@
 #
 # If the pool is ever built under other names -- `build:mainnet -- --staker-name
 # esbee-dao-bond-staker-2 --suffix -2`, to match a grant that spells something
-# else -- the four `[contracts.*]` sections below have to be renamed to match,
+# else -- the six `[contracts.*]` sections below have to be renamed to match,
 # both in their headers and in their paths. The plan generator takes the same
 # flags.
 #
@@ -35,9 +35,9 @@ check_checker = { trusted_sender = false, trusted_caller = false, callee_filter 
 # The pool. Published as `esbee-dao-bond-staker-1`, because that is the name
 # the genesis bond's allowlist spells -- pox-5 keys a grant on the staker's
 # principal, and `build:mainnet` names the contract to match. See MAINNET.md.
-# Its three siblings carry the same `-1`: each is wired to this pool by a
-# constant that cannot be re-pointed, so a later pool needs three of its own,
-# and a contract name can never be reused at an address.
+# Its siblings carry the same `-1`: each is wired to this pool by a constant
+# that cannot be re-pointed, so a later pool needs a set of its own, and a
+# contract name can never be reused at an address.
 #
 # Holds the pooled sBTC principal. Must be deployed before the pool, which
 # calls it; its own reference back is only a principal value.
@@ -46,12 +46,24 @@ path = "build/mainnet/bond-treasury-1.clar"
 clarity_version = 6
 epoch = "4.0"
 
+# Receipt tokens for a member's principal, minted and burned by the pool.
+# Deployed before it; their reference back is only a principal value.
+[contracts.iou-bond-btc-1]
+path = "build/mainnet/iou-bond-btc-1.clar"
+clarity_version = 6
+epoch = "4.0"
+
+[contracts.iou-bond-stx-1]
+path = "build/mainnet/iou-bond-stx-1.clar"
+clarity_version = 6
+epoch = "4.0"
+
 [contracts.esbee-dao-bond-staker-1]
 path = "build/mainnet/esbee-dao-bond-staker-1.clar"
 clarity_version = 6
 epoch = "4.0"
 
-# The L1 on- and off-ramp. It calls the two above, and neither calls it.
+# The L1 on- and off-ramp. It calls the pool and the treasury; neither calls it.
 [contracts.bond-bridge-1]
 path = "build/mainnet/bond-bridge-1.clar"
 clarity_version = 6
