@@ -23,6 +23,7 @@
     "build:testnet": "node scripts/build-network.mjs testnet",
     "build:mainnet": "node scripts/build-network.mjs mainnet",
     "plan:testnet": "node scripts/make-testnet-plan.mjs",
+    "probe:testnet": "node scripts/probe-testnet.mjs",
     "simulate:genesis": "node scripts/build-network.mjs mainnet && node scripts/simulate-mainnet.mjs genesis",
     "simulate:bridge": "node scripts/build-network.mjs mainnet && node scripts/simulate-mainnet.mjs bridge"
   },

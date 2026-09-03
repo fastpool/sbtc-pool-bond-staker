@@ -1,6 +1,6 @@
 ---
 id: 0
-name: Testnet deployment
+name: Deposit into vault-3
 network: testnet
 stacks-node: "https://api.testnet.hiro.so"
 bitcoin-node: "http://blockstack:blockstacksystem@bitcoind.testnet.stacks.co:18332"
@@ -8,10 +8,14 @@ plan:
   batches:
   - id: 0
     transactions:
+    # deposit(sats) -- moves both legs: the STX the sats need at the bound
+    # bond's ratio is pulled in the same call, so it only runs once a bond is
+    # bound. 0.045 BTC wants 2.25 STX at bond 6's pricing.
     - transaction-type: contract-call
-      contract-id: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM.vault-2
+      contract-id: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM.vault-3
       expected-sender: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM
       method: deposit
-      parameters:        
+      parameters:
         - "u4500000"
-      cost: 5000
+      cost: 50000
+    epoch: '4.0'

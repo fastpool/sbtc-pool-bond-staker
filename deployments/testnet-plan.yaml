@@ -9,28 +9,28 @@ plan:
   - id: 0
     transactions:
     - transaction-type: contract-publish
-      contract-name: bond-treasury-2
+      contract-name: bond-treasury-3
       expected-sender: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM
       cost: 50000
-      path: build/testnet/bond-treasury-2.clar
+      path: build/testnet/bond-treasury-3.clar
       clarity-version: 6
     - transaction-type: contract-publish
-      contract-name: vault-2
+      contract-name: vault-3
       expected-sender: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM
-      cost: 865380
-      path: build/testnet/vault-2.clar
+      cost: 992030
+      path: build/testnet/vault-3.clar
       clarity-version: 6
     - transaction-type: contract-publish
-      contract-name: bond-bridge-2
+      contract-name: bond-bridge-3
       expected-sender: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM
-      cost: 383170
-      path: build/testnet/bond-bridge-2.clar
+      cost: 493450
+      path: build/testnet/bond-bridge-3.clar
       clarity-version: 6
     - transaction-type: contract-publish
-      contract-name: esbee-dao-2
+      contract-name: esbee-dao-3
       expected-sender: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM
-      cost: 146230
-      path: build/testnet/esbee-dao-2.clar
+      cost: 162680
+      path: build/testnet/esbee-dao-3.clar
       clarity-version: 6
     epoch: '4.0'
   - id: 1
@@ -39,12 +39,14 @@ plan:
     # contract's own deployer may call it, and only once. A separate batch so
     # the publishes above are confirmed first.
     #
-    # The deployer takes the seat rather than the DAO, because `bind-bond` is
-    # deliberately not behind a vote: a bond has to be bound inside the window
-    # pox-5 allows, which a voting period, a delay and a quorum cannot be relied
-    # on to hit. The DAO joins as a second operator in the next batch.
+    # The deployer takes the seat rather than the DAO because the DAO cannot
+    # vote until the pool has staked: voting weight is committed shares, and
+    # there are none before then. The DAO joins as a second operator in the
+    # next batch. Binding itself needs no seat -- `bind-next-bond` is
+    # permissionless -- so what the seat holds is the signer manager, the
+    # skip, and the sweep.
     - transaction-type: contract-call
-      contract-id: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM.vault-2
+      contract-id: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM.vault-3
       expected-sender: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM
       method: initialize
       parameters:
@@ -63,11 +65,11 @@ plan:
     # call *from the DAO*, by vote; leaving both seated is the right state for a
     # testnet run, since only the keyed operator can bind a bond.
     - transaction-type: contract-call
-      contract-id: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM.vault-2
+      contract-id: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM.vault-3
       expected-sender: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM
       method: update-operator
       parameters:
-        - "'STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM.esbee-dao-2"
+        - "'STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM.esbee-dao-3"
         - "true"
       cost: 50000
     epoch: '4.0'

@@ -680,28 +680,30 @@ The deployer address is a required argument because it appears throughout and
 `initialize` only accepts the contract's own deployer — a half-substituted plan
 would deploy under one identity and initialize under another. Publish fees are
 sized from the contract bytes at the fee rate in `settings/Testnet.toml`, and
-come to about 1.24 STX for the whole plan.
+come to about 1.8 STX for the whole plan.
 
 ### The pool's name is per network
 
-**On testnet the pool is published as `vault-2`, not `bond-staker`.** pox-5 keys
+**On testnet the pool is published as `vault-3`, not `bond-staker`.** pox-5 keys
 a bond's allowlist on the staker's *principal*, and a grant is only ever
 inserted by `setup-bond` — so a pool published under a name no grant mentions
-can never stake. The testnet grants spell `<deployer>.vault-1` and
-`<deployer>.vault-2`, and `vault-1` is taken, so `vault-2` is the name this
-build targets. Its three siblings take a `-2` for the same reason: a contract
-name cannot be reused at an address.
+can never stake, and the name is whatever the grant is asked for under. The
+grants so far spell `<deployer>.vault-1` and `<deployer>.vault-2`, and both
+names carry earlier pools that never staked, so the third is `vault-3` and
+needs a grant of its own — see [TESTNET.md](TESTNET.md). Its three siblings
+take a `-3` for a duller reason: a contract name cannot be reused at an
+address, and their unsuffixed and `-2` names are spent.
 
-`build:testnet` therefore emits `build/testnet/vault-2.clar`, rewriting every
+`build:testnet` therefore emits `build/testnet/vault-3.clar`, rewriting every
 `.bond-staker` reference in the sibling contracts along with the file name; the
 plan generator and `Clarinet-testnet.toml` agree. `build:mainnet` keeps
 `bond-staker`. Nothing in `contracts/` changes, and the tests are unaffected.
 
-To publish under some other name again, pass `--staker-name` to both commands
-and rename the matching section in `Clarinet-testnet.toml`:
+To publish under other names again, pass `--staker-name` and `--suffix` to
+both commands and rename the four matching sections in `Clarinet-testnet.toml`:
 
-    pnpm run build:testnet -- --staker-name vault-3
-    pnpm run plan:testnet ST3YOUR…DEPLOYER -- --staker-name vault-3
+    pnpm run build:testnet -- --staker-name vault-4 --suffix -4
+    pnpm run plan:testnet ST3YOUR…DEPLOYER -- --staker-name vault-4 --suffix -4
 
 `initialize` binds the pool to a signer manager, which must already be
 registered with pox-5. The default is

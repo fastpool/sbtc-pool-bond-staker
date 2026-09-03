@@ -23,20 +23,22 @@
 // The pool's name is forced by the protocol. pox-5 keys a bond's allowlist on
 // the staker's *principal*, and a grant is only ever inserted by `setup-bond`
 // -- so a pool published under a name no grant mentions can never stake. The
-// testnet grants spell `<deployer>.vault-1` and `<deployer>.vault-2`, and
-// `vault-1` is already published (the pool as it was before members could
-// unstake mid-term, kept under `v1/`). So on testnet the pool is `vault-2`.
+// testnet grants so far spell `<deployer>.vault-1` and `<deployer>.vault-2`,
+// and both are published: `vault-1` is the pool as it was before members could
+// unstake mid-term (kept under `v1/`), `vault-2` the one before binding became
+// permissionless. Neither ever staked. The third pool is `vault-3`, and its
+// grant is a request to the bond admin -- see TESTNET.md.
 //
 // Its three siblings are forced by something duller: a contract name can never
 // be reused at an address, and `bond-treasury`, `bond-bridge` and `esbee-dao`
-// were all published alongside `vault-1`. Each is wired to that pool by a
-// constant that cannot be re-pointed, so the new pool needs three of its own.
-// They take a `-2` suffix to match, and nothing about them changes but the
-// name.
+// were published alongside `vault-1`, their `-2` copies alongside `vault-2`.
+// Each is wired to its pool by a constant that cannot be re-pointed, so a new
+// pool needs three of its own. They take a `-3` suffix to match, and nothing
+// about them changes but the name.
 //
 //   node scripts/build-network.mjs mainnet    -> bond-staker.clar, bond-treasury.clar, ...
-//   node scripts/build-network.mjs testnet    -> vault-2.clar, bond-treasury-2.clar, ...
-//   node scripts/build-network.mjs testnet --staker-name vault-3
+//   node scripts/build-network.mjs testnet    -> vault-3.clar, bond-treasury-3.clar, ...
+//   node scripts/build-network.mjs testnet --staker-name vault-4 --suffix -4
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -134,20 +136,21 @@ const TARGETS = {
   testnet: {
     sbtc: "SN3VMHXEN64ZZF71JQ5VESXDWTR301XTTXGF4J8F1",
     pox5: SOURCE.pox5,
-    staker: "vault-2",
-    suffix: "-2",
+    staker: "vault-3",
+    suffix: "-3",
   },
 };
 
 const usage =
-  `usage: node scripts/build-network.mjs <${Object.keys(TARGETS).join("|")}> [--staker-name <name>]`;
+  `usage: node scripts/build-network.mjs <${Object.keys(TARGETS).join("|")}>` +
+  " [--staker-name <name>] [--suffix <suffix>]";
 
 // Clarity's own rule for a contract name. A name the chain would reject is
 // better caught here than by a publish that has already paid its fee.
 const NAME = /^[a-zA-Z]([a-zA-Z0-9]|[-_]){0,39}$/;
 
 // A bare `--` is dropped: pnpm forwards the separator itself, so the documented
-// `pnpm run build:testnet -- --staker-name vault-2` arrives with it still in.
+// `pnpm run build:testnet -- --staker-name vault-4` arrives with it still in.
 const [network, ...rest] = process.argv.slice(2).filter((a) => a !== "--");
 if (!TARGETS[network]) {
   console.error(usage);
@@ -156,16 +159,27 @@ if (!TARGETS[network]) {
 const target = TARGETS[network];
 
 // `--staker-name` overrides the network's own name, for the case where a grant
-// is issued against something else again. The siblings follow the network.
+// is issued against something else again; `--suffix` moves the siblings along
+// with it, since the names the last generation took are spent too. Neither is
+// needed for the current generation, which is the network's default.
 let staker = target.staker;
+let suffix = target.suffix;
 for (let i = 0; i < rest.length; i++) {
-  if (rest[i] !== "--staker-name") {
+  if (rest[i] === "--staker-name") {
+    staker = rest[++i];
+    if (!NAME.test(staker ?? "")) {
+      console.error(`not a valid contract name: ${staker ?? "(missing)"}\n${usage}`);
+      process.exit(1);
+    }
+  } else if (rest[i] === "--suffix") {
+    suffix = rest[++i];
+    // What a suffix may be is what the names it lands on may end in.
+    if (!/^[a-zA-Z0-9_-]{0,20}$/.test(suffix ?? "\0")) {
+      console.error(`not a valid name suffix: ${suffix ?? "(missing)"}\n${usage}`);
+      process.exit(1);
+    }
+  } else {
     console.error(`unexpected argument: ${rest[i]}\n${usage}`);
-    process.exit(1);
-  }
-  staker = rest[++i];
-  if (!NAME.test(staker ?? "")) {
-    console.error(`not a valid contract name: ${staker ?? "(missing)"}\n${usage}`);
     process.exit(1);
   }
 }
@@ -174,7 +188,7 @@ for (let i = 0; i < rest.length; i++) {
 const renames = new Map();
 if (staker !== STAKER) renames.set(STAKER, staker);
 for (const name of SIBLINGS) {
-  const published = `${name}${target.suffix}`;
+  const published = `${name}${suffix}`;
   if (published === name) continue;
   if (!NAME.test(published)) {
     console.error(`not a valid contract name: ${published}`);
