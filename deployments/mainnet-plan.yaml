@@ -29,19 +29,19 @@ plan:
     - transaction-type: contract-publish
       contract-name: esbee-dao-bond-staker-1
       expected-sender: SPFCGF789WX1B737VQYAQ6BG3QYVMJGPDKRKYK00
-      cost: 659680
+      cost: 65968
       path: build/mainnet/esbee-dao-bond-staker-1.clar
       clarity-version: 6
     - transaction-type: contract-publish
       contract-name: bond-bridge-1
       expected-sender: SPFCGF789WX1B737VQYAQ6BG3QYVMJGPDKRKYK00
-      cost: 277500
+      cost: 27750
       path: build/mainnet/bond-bridge-1.clar
       clarity-version: 6
     - transaction-type: contract-publish
       contract-name: esbee-dao-1
       expected-sender: SPFCGF789WX1B737VQYAQ6BG3QYVMJGPDKRKYK00
-      cost: 118260
+      cost: 11826
       path: build/mainnet/esbee-dao-1.clar
       clarity-version: 6
     epoch: '4.0'
@@ -64,7 +64,7 @@ plan:
       parameters:
         - "'SPMPMA1V6P430M8C91QS1G9XJ95S59JS1TZFZ4Q4.fastpool-max500-signer-manager"
         - "'SPFCGF789WX1B737VQYAQ6BG3QYVMJGPDKRKYK00"
-      cost: 50000
+      cost: 5000
     epoch: '4.0'
   - id: 2
     transactions:
@@ -83,5 +83,5 @@ plan:
       parameters:
         - "'SPFCGF789WX1B737VQYAQ6BG3QYVMJGPDKRKYK00.esbee-dao-1"
         - "true"
-      cost: 50000
+      cost: 5000
     epoch: '4.0'

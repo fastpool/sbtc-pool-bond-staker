@@ -112,6 +112,28 @@ The plan generator writes `deployments/mainnet-plan.yaml` with three batches:
 Clarinet waits for each batch to confirm before sending the next. Expect three
 Stacks blocks at the least; at the time of writing, allow an hour.
 
+### 2b. Trust the other signer managers — any time after 2
+
+    clarinet deployments apply --mainnet \
+      --manifest-path Clarinet-mainnet.toml \
+      --deployment-plan-path deployments/mainnet-trust-signer-managers.yaml
+
+Three `trust-signer-manager` calls from the deployer's operator seat, one per
+code hash. `initialize` already trusts the Fast Pool max-500 manager; these
+add the other managers registered with pox-5, so a later move needs only a
+vote, not a vote plus an epoch of notice:
+
+| manager | `contract-hash?` |
+| --- | --- |
+| `SP21YTSM60CAY6D011EZVEVNKXVW8FVZE198XEFFP.fastpool-1-signer-manager` | `b85eab12…bbe7f50e` |
+| `SPV9K21TBFAK4KNRJXF5DFP8N7W46G4V9RCJDC22.juice-pool-stx-signer` | `cec1d05f…a8ed76b3` |
+| `SP4SZE494VC2YC5JYG7AYFQ44F5Q4PYV7DVMDPBG.native-pool-signer-manager` | `6adbd8ee…08a260d9` |
+
+The full hashes are in the plan file, each the sha512/256 of the source as
+published on mainnet; `get-signer-manager-hash` on the pool returns the same
+bytes, and `get-trusted-signer <hash>` should read `(some u0)` afterwards.
+Order against the bind does not matter — bind first if the deadline is close.
+
 ### 3. Bind — before 965386
 
     clarinet deployments apply --mainnet \

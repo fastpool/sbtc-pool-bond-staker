@@ -1,0 +1,39 @@
+---
+id: 0
+name: Trust the other signer managers
+network: mainnet
+stacks-node: "https://api.hiro.so"
+bitcoin-node: "http://blockstack:blockstacksystem@bitcoin.blockstack.com:8332"
+plan:
+  batches:
+  - id: 0
+    transactions:
+    # trust-signer-manager(code-hash) -- operator only, so it runs after the
+    # main plan has seated the deployer. Each hash is `contract-hash?` of a
+    # manager registered with pox-5, i.e. sha512/256 of its published source;
+    # `get-signer-manager-hash` on the pool reads the same value off chain
+    # state. Trusting is by hash so the vetted bytes and the trusted bytes
+    # are one thing. Sent before `stake`, each is usable from epoch 1 -- the
+    # first roll -- the same footing as the manager `initialize` named.
+    #
+    # Check afterwards: `get-trusted-signer 0x…` reads `(some u0)` for each.
+    #
+    # SPV9K21TBFAK4KNRJXF5DFP8N7W46G4V9RCJDC22.juice-pool-stx-signer
+    # (12 846 bytes, published at stacks 8671025)
+    - transaction-type: contract-call
+      contract-id: SPFCGF789WX1B737VQYAQ6BG3QYVMJGPDKRKYK00.esbee-dao-bond-staker-1
+      expected-sender: SPFCGF789WX1B737VQYAQ6BG3QYVMJGPDKRKYK00
+      method: trust-signer-manager
+      parameters:
+        - "0xcec1d05f94064a9eeadfcfc243181107e1dad80d18d6b49130aad356a8ed76b3"
+      cost: 5000
+    # SP4SZE494VC2YC5JYG7AYFQ44F5Q4PYV7DVMDPBG.native-pool-signer-manager
+    # (2 761 bytes, published at stacks 8665689)
+    - transaction-type: contract-call
+      contract-id: SPFCGF789WX1B737VQYAQ6BG3QYVMJGPDKRKYK00.esbee-dao-bond-staker-1
+      expected-sender: SPFCGF789WX1B737VQYAQ6BG3QYVMJGPDKRKYK00
+      method: trust-signer-manager
+      parameters:
+        - "0x6adbd8ee1ebe89bfee94576cf80f10505894858b6b2b4924f446258408a260d9"
+      cost: 5000
+    epoch: '4.0'
