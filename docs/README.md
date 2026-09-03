@@ -13,6 +13,15 @@ one disagrees with a contract, the contract is right and the note is stale.
 | --- | --- |
 | [address-front-running.md](address-front-running.md) | Why `bond-bridge` commits before it reveals, why the wait is two bitcoin blocks, what it does and does not protect, and how BNS-V2's version of the same race differs |
 
+## Talk
+
+[talk/](talk/) is the esbee DAO talk on bitcoin staking through this pool: the
+[article](talk/article-bond-staker-esbee-dao.md), the
+[slides](talk/slides-bitcoin-staking-esbee-dao.md) in markdown, and the two
+scripts that render them -- `pnpm build:slides` for the PDF (LibreOffice
+Writer), `pnpm build:site` for the self-contained reveal.js page in `site/`
+that `pnpm deploy:site` publishes.
+
 ## Shelved
 
 Design work that was done and then parked. Nothing here is built, and nothing

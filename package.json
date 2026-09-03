@@ -8,6 +8,9 @@
   "scripts": {
     "pretest": "node scripts/build-test-managers.mjs --check",
     "test": "vitest run",
+    "build:slides": "node docs/talk/build-slides.mjs",
+    "build:site": "node docs/talk/build-slides-html.mjs",
+    "deploy:site": "npx -y github:jooray/nsite-clay deploy site",
     "build:managers": "node scripts/build-test-managers.mjs",
     "test:report": "vitest run -- --coverage --costs",
     "test:watch": "chokidar \"tests/**/*.ts\" \"contracts/**/*.clar\" -c \"pnpm run test:report\"",
