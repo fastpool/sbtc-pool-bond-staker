@@ -281,11 +281,11 @@ describe("bond-staker: what leaving early costs", () => {
 
     expect(Number(earlyUnstakePreview(bob)["at-risk-rewards"])).toBe(3_000_000);
     expect(earlyUnstakePreview(bob)["sync-first"]).toBe(true);
-    expect(unstakeEarly(bob, BOB_SATS)).toBeErr(Cl.uint(131)); // REWARDS_PENDING
+    expect(unstakeEarly(bob, BOB_SATS)).toBeErr(Cl.uint(2031)); // REWARDS_PENDING
 
     // Taking part of it is still fine: shares remain to split by.
     expect(unstakeEarly(bob, 1_000_000).type).toBe("ok");
-    expect(unstakeEarly(bob, BOB_SATS - 1_000_000)).toBeErr(Cl.uint(131));
+    expect(unstakeEarly(bob, BOB_SATS - 1_000_000)).toBeErr(Cl.uint(2031));
 
     // The integer split leaves a sat behind on the first pass; the preview
     // still says so, because a second pass can pick it up.
@@ -293,7 +293,7 @@ describe("bond-staker: what leaving early costs", () => {
     expect(claimableRewards(bob)).toBe(2_999_999);
     expect(Number(earlyUnstakePreview(bob)["at-risk-rewards"])).toBe(1);
     expect(earlyUnstakePreview(bob)["sync-first"]).toBe(true);
-    expect(unstakeEarly(bob, BOB_SATS - 1_000_000)).toBeErr(Cl.uint(131));
+    expect(unstakeEarly(bob, BOB_SATS - 1_000_000)).toBeErr(Cl.uint(2031));
     expect(syncRewards(carol).type).toBe("ok");
     expect(earlyUnstakePreview(bob)["sync-first"]).toBe(false);
     expect(unstakeEarly(bob, BOB_SATS - 1_000_000).type).toBe("ok");
@@ -319,7 +319,7 @@ describe("bond-staker: what leaving early costs", () => {
 
     expect(Number(earlyUnstakePreview(bob)["at-risk-rewards"])).toBe(1);
     expect(earlyUnstakePreview(bob)["sync-first"]).toBe(false);
-    expect(syncRewards(carol)).toBeErr(Cl.uint(114)); // NOTHING_TO_CLAIM
+    expect(syncRewards(carol)).toBeErr(Cl.uint(2014)); // NOTHING_TO_CLAIM
     expect(unstakeEarly(bob, BOB_SATS).type).toBe("ok");
     expect(Number(epoch(0)["total-shares"])).toBe(0);
   });
@@ -402,7 +402,7 @@ describe("bond-staker: what leaving early costs", () => {
     expect(Number(epoch(0)["credit-offset"])).toBeGreaterThan(0);
 
     // With nothing new in, a sync is a no-op rather than an abort.
-    expect(syncRewards()).toBeErr(Cl.uint(114)); // NOTHING_TO_CLAIM
+    expect(syncRewards()).toBeErr(Cl.uint(2014)); // NOTHING_TO_CLAIM
 
     // And the next real payout still credits cleanly, on top of the offset
     // rather than instead of it.
@@ -459,41 +459,41 @@ describe("bond-staker: what it refuses", () => {
   it("refuses before the pool has ever staked", () => {
     bootstrap();
     deposit(alice, ALICE_SATS);
-    expect(unstakeEarly(alice, ALICE_SATS)).toBeErr(Cl.uint(107)); // NOT_STAKED
+    expect(unstakeEarly(alice, ALICE_SATS)).toBeErr(Cl.uint(2007)); // NOT_STAKED
     // ...where `withdraw` is the right call, and still free.
     expect(withdraw(alice).type).toBe("ok");
   });
 
   it("refuses a non-member, a zero amount and more than is held", () => {
     stakeFirstBond();
-    expect(unstakeEarly(carol, 1)).toBeErr(Cl.uint(110)); // NOTHING_DEPOSITED
-    expect(unstakeEarly(alice, 0)).toBeErr(Cl.uint(116)); // INVALID_AMOUNT
-    expect(unstakeEarly(alice, ALICE_SATS + 1)).toBeErr(Cl.uint(116));
+    expect(unstakeEarly(carol, 1)).toBeErr(Cl.uint(2010)); // NOTHING_DEPOSITED
+    expect(unstakeEarly(alice, 0)).toBeErr(Cl.uint(2016)); // INVALID_AMOUNT
+    expect(unstakeEarly(alice, ALICE_SATS + 1)).toBeErr(Cl.uint(2016));
   });
 
   it("refuses the wrong signer manager", () => {
     stakeFirstBond();
-    expect(unstakeEarly(alice, ALICE_SATS, ALT_MANAGER)).toBeErr(Cl.uint(111));
+    expect(unstakeEarly(alice, ALICE_SATS, ALT_MANAGER)).toBeErr(Cl.uint(2011));
   });
 
   it("refuses a member already on their way out", () => {
     stakeFirstBond();
     expect(requestExit(alice).type).toBe("ok");
-    expect(unstakeEarly(alice, ALICE_SATS)).toBeErr(Cl.uint(123)); // ALREADY_EXITING
+    expect(unstakeEarly(alice, ALICE_SATS)).toBeErr(Cl.uint(2023)); // ALREADY_EXITING
   });
 
   it("refuses once the pool has wound down", () => {
     const { unlockHeight } = stakeFirstBond();
     advanceToBurnHeight(unlockHeight);
     expect(unstakeSbtc().type).toBe("ok");
-    expect(unstakeEarly(alice, ALICE_SATS)).toBeErr(Cl.uint(112)); // ALREADY_UNSTAKED
+    expect(unstakeEarly(alice, ALICE_SATS)).toBeErr(Cl.uint(2012)); // ALREADY_UNSTAKED
   });
 
   it("refuses a second bite once the whole position is gone", () => {
     stakeFirstBond();
     expect(unstakeEarly(alice, ALICE_SATS).type).toBe("ok");
     // The exit flag is set, so this bounces before the amount is even read.
-    expect(unstakeEarly(alice, 1)).toBeErr(Cl.uint(123)); // ALREADY_EXITING
+    expect(unstakeEarly(alice, 1)).toBeErr(Cl.uint(2023)); // ALREADY_EXITING
   });
 
   it("will not let a full early exit be cancelled", () => {
@@ -501,7 +501,7 @@ describe("bond-staker: what it refuses", () => {
     expect(unstakeEarly(alice, ALICE_SATS).type).toBe("ok");
     // There is no position to come back to: the sats are paid out and the
     // shares are gone. Only the STX is still waiting on the roll.
-    expect(cancelExit(alice)).toBeErr(Cl.uint(110)); // NOTHING_DEPOSITED
+    expect(cancelExit(alice)).toBeErr(Cl.uint(2010)); // NOTHING_DEPOSITED
   });
 
   it("still lets an ordinary `request-exit` be cancelled", () => {
@@ -572,7 +572,7 @@ describe("bond-staker: the rest of the pool is undisturbed", () => {
 
     // Nothing to pull out of pox-5, but the STX leg is still locked and the
     // unlock height still gates the call.
-    expect(unstakeSbtc()).toBeErr(Cl.uint(108)); // TOO_EARLY
+    expect(unstakeSbtc()).toBeErr(Cl.uint(2008)); // TOO_EARLY
     advanceToBurnHeight(unlockHeight);
     expect(unstakeSbtc().type).toBe("ok");
     expect(poolConfig().finished).toBe(true);

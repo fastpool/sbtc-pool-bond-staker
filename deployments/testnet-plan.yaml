@@ -29,19 +29,19 @@ plan:
     - transaction-type: contract-publish
       contract-name: vault-3
       expected-sender: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM
-      cost: 659610
+      cost: 659910
       path: build/testnet/vault-3.clar
       clarity-version: 6
     - transaction-type: contract-publish
       contract-name: bond-bridge-3
       expected-sender: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM
-      cost: 276570
+      cost: 275870
       path: build/testnet/bond-bridge-3.clar
       clarity-version: 6
     - transaction-type: contract-publish
       contract-name: esbee-dao-3
       expected-sender: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM
-      cost: 116980
+      cost: 116660
       path: build/testnet/esbee-dao-3.clar
       clarity-version: 6
     epoch: '4.0'

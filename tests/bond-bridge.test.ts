@@ -157,7 +157,7 @@ describe("bond-bridge: announcing an address", () => {
     expect(announceBtcAddress(bob, BOB_SATS, p2sh).type).toBe("ok");
     expect(
       announceBtcAddress(carol, BOB_SATS, btcAddress(BOB_HASH, "02")),
-    ).toBeErr(Cl.uint(303)); // ADDRESS_ANNOUNCED
+    ).toBeErr(Cl.uint(4003)); // ADDRESS_ANNOUNCED
     expect(
       plain(
         readBridge("get-address-script", [btcAddress(BOB_HASH, "03")]),
@@ -190,7 +190,7 @@ describe("bond-bridge: announcing an address", () => {
     ]) {
       expect(plain(readBridge("get-address-script", [address]))).toBeNull();
       expect(plain(readBridge("get-address-digest", [address, Cl.bufferFromHex(SALT)]))).toBeNull();
-      expect(revealBtcAddress(alice, address)).toBeErr(Cl.uint(315));
+      expect(revealBtcAddress(alice, address)).toBeErr(Cl.uint(4015));
     }
   });
 
@@ -198,7 +198,7 @@ describe("bond-bridge: announcing an address", () => {
     bootstrap();
     expect(announceBtcAddress(alice, ALICE_SATS, aliceAddress).type).toBe("ok");
     // and finds out before any bitcoin has moved
-    expect(announceBtcAddress(bob, BOB_SATS, aliceAddress)).toBeErr(Cl.uint(303));
+    expect(announceBtcAddress(bob, BOB_SATS, aliceAddress)).toBeErr(Cl.uint(4003));
     // ...any other address of theirs will do
     expect(announceBtcAddress(bob, BOB_SATS, bobAddress).type).toBe("ok");
   });
@@ -209,7 +209,7 @@ describe("bond-bridge: announcing an address", () => {
     announceBtcAddress(alice, ALICE_SATS, aliceAddress);
 
     // nobody else can cancel it while it is live
-    expect(cancelBtcAddress(aliceAddress, bob)).toBeErr(Cl.uint(308)); // LIVE
+    expect(cancelBtcAddress(aliceAddress, bob)).toBeErr(Cl.uint(4008)); // LIVE
     expect(cancelBtcAddress(aliceAddress, alice).type).toBe("ok");
 
     expect(stxBalance(alice)).toBe(stxBefore);
@@ -224,7 +224,7 @@ describe("bond-bridge: announcing an address", () => {
     bootstrap();
     announceBtcAddress(alice, ALICE_SATS, aliceAddress);
     simnet.mineEmptyBurnBlocks(ANNOUNCE_TTL - 1);
-    expect(cancelBtcAddress(aliceAddress, carol)).toBeErr(Cl.uint(308));
+    expect(cancelBtcAddress(aliceAddress, carol)).toBeErr(Cl.uint(4008));
 
     simnet.mineEmptyBurnBlocks(1);
     expect(cancelBtcAddress(aliceAddress, carol).type).toBe("ok");
@@ -272,7 +272,7 @@ describe("bond-bridge: claiming an address by signature", () => {
     // is never even reached
     expect(
       claimBtcAddress(alice, BOB_KEY, ALICE_SATS, btcKeyAddress(ALICE_KEY)),
-    ).toBeErr(Cl.uint(323)); // WRONG_KEY
+    ).toBeErr(Cl.uint(4023)); // WRONG_KEY
     expect(btcAnnouncement(btcKeyAddress(ALICE_KEY))).toBeNull();
   });
 
@@ -289,7 +289,7 @@ describe("bond-bridge: claiming an address by signature", () => {
         btcKeyAddress(ALICE_KEY),
         alicesProof,
       ),
-    ).toBeErr(Cl.uint(324)); // BAD_SIGNATURE
+    ).toBeErr(Cl.uint(4024)); // BAD_SIGNATURE
 
     // and the address is still there for its owner
     expect(claimBtcAddress(alice, ALICE_KEY, ALICE_SATS).type).toBe("ok");
@@ -307,7 +307,7 @@ describe("bond-bridge: claiming an address by signature", () => {
           ALICE_SATS,
           btcKeyAddress(ALICE_KEY, version),
         ),
-      ).toBeErr(Cl.uint(322)); // UNPROVABLE_ADDRESS
+      ).toBeErr(Cl.uint(4022)); // UNPROVABLE_ADDRESS
     }
   });
 
@@ -348,7 +348,7 @@ describe("bond-bridge: claiming an address by signature", () => {
         ALICE_SATS,
         btcAddress(hash160Of(privateKeyToPublic(ALICE_KEY)), "02"),
       ),
-    ).toBeErr(Cl.uint(323)); // WRONG_KEY
+    ).toBeErr(Cl.uint(4023)); // WRONG_KEY
   });
 
   it("reaches a legacy address made from the uncompressed key", () => {
@@ -380,7 +380,7 @@ describe("bond-bridge: claiming an address by signature", () => {
           ALICE_SATS,
           btcAddress(hash160Of(uncompressedKey(ALICE_KEY)), version),
         ),
-      ).toBeErr(Cl.uint(323)); // WRONG_KEY
+      ).toBeErr(Cl.uint(4023)); // WRONG_KEY
     }
   });
 
@@ -396,7 +396,7 @@ describe("bond-bridge: claiming an address by signature", () => {
           ALICE_SATS,
           btcAddress("c4".repeat(32), version),
         ),
-      ).toBeErr(Cl.uint(322)); // UNPROVABLE_ADDRESS
+      ).toBeErr(Cl.uint(4022)); // UNPROVABLE_ADDRESS
     }
   });
 
@@ -405,7 +405,7 @@ describe("bond-bridge: claiming an address by signature", () => {
     const address = btcKeyAddress(ALICE_KEY);
     // a squatter names it without proving anything, and gets there first
     expect(announceBtcAddress(bob, BOB_SATS, address).type).toBe("ok");
-    expect(claimBtcAddress(alice, ALICE_KEY, ALICE_SATS)).toBeErr(Cl.uint(303));
+    expect(claimBtcAddress(alice, ALICE_KEY, ALICE_SATS)).toBeErr(Cl.uint(4003));
 
     // it costs the squatter the STX leg until the announcement runs out
     simnet.mineEmptyBurnBlocks(ANNOUNCE_TTL);
@@ -437,7 +437,7 @@ describe("bond-bridge: claiming an address by signature", () => {
     // the same address, the other way round
     expect(
       announceBtcAddress(bob, BOB_SATS, btcKeyAddress(ALICE_KEY)),
-    ).toBeErr(Cl.uint(303));
+    ).toBeErr(Cl.uint(4003));
     // ...and bob's own is free
     expect(claimBtcAddress(bob, BOB_KEY, BOB_SATS).type).toBe("ok");
   });
@@ -449,19 +449,19 @@ describe("bond-bridge: committing and revealing an address", () => {
   it("will not reveal in the same block as the commit", () => {
     bootstrap();
     expect(commitBtcAddress(alice, digest(), ALICE_SATS).type).toBe("ok");
-    expect(revealBtcAddress(alice, aliceAddress)).toBeErr(Cl.uint(314)); // SOON
+    expect(revealBtcAddress(alice, aliceAddress)).toBeErr(Cl.uint(4014)); // SOON
     simnet.mineEmptyBurnBlocks(REVEAL_DELAY);
     expect(revealBtcAddress(alice, aliceAddress).type).toBe("ok");
   });
 
   it("will not reveal an address nobody committed to", () => {
     bootstrap();
-    expect(revealBtcAddress(alice, aliceAddress)).toBeErr(Cl.uint(312));
+    expect(revealBtcAddress(alice, aliceAddress)).toBeErr(Cl.uint(4012));
     // nor one committed to under a different salt
     expect(commitBtcAddress(alice, digest(), ALICE_SATS).type).toBe("ok");
     simnet.mineEmptyBurnBlocks(REVEAL_DELAY);
     expect(revealBtcAddress(alice, aliceAddress, "cc".repeat(32))).toBeErr(
-      Cl.uint(312),
+      Cl.uint(4012),
     );
   });
 
@@ -491,7 +491,7 @@ describe("bond-bridge: committing and revealing an address", () => {
     // knowing the salt, the address is already taken.
     expect(commitBtcAddress(carol, digest(), ALICE_SATS).type).toBe("ok");
     simnet.mineEmptyBurnBlocks(REVEAL_DELAY);
-    expect(revealBtcAddress(carol, aliceAddress)).toBeErr(Cl.uint(303));
+    expect(revealBtcAddress(carol, aliceAddress)).toBeErr(Cl.uint(4003));
 
     // The sats go where the first reveal said they would.
     const funded = depositFrom(ALICE_HASH);
@@ -510,7 +510,7 @@ describe("bond-bridge: committing and revealing an address", () => {
     // Alice's own commit is unaffected.
     expect(commitBtcAddress(alice, digest(), ALICE_SATS).type).toBe("ok");
     // ...and she cannot commit the same one twice.
-    expect(commitBtcAddress(alice, digest(), ALICE_SATS)).toBeErr(Cl.uint(313));
+    expect(commitBtcAddress(alice, digest(), ALICE_SATS)).toBeErr(Cl.uint(4013));
 
     simnet.mineEmptyBurnBlocks(REVEAL_DELAY);
     expect(revealBtcAddress(alice, aliceAddress).type).toBe("ok");
@@ -525,7 +525,7 @@ describe("bond-bridge: committing and revealing an address", () => {
     expect(num(readPool("get-committing-sats"))).toBe(ALICE_SATS);
 
     // A stranger cannot cancel it while it is live...
-    expect(cancelBtcCommitment(alice, digest(), carol)).toBeErr(Cl.uint(308));
+    expect(cancelBtcCommitment(alice, digest(), carol)).toBeErr(Cl.uint(4008));
     // ...but the member can, whenever.
     expect(cancelBtcCommitment(alice, digest()).type).toBe("ok");
     expect(stxBalance(alice)).toBe(stxBefore);
@@ -539,7 +539,7 @@ describe("bond-bridge: committing and revealing an address", () => {
 
     // not a moment before COMMIT_TTL...
     simnet.mineEmptyBurnBlocks(COMMIT_TTL - 1);
-    expect(cancelBtcCommitment(alice, digest(), carol)).toBeErr(Cl.uint(308));
+    expect(cancelBtcCommitment(alice, digest(), carol)).toBeErr(Cl.uint(4008));
 
     simnet.mineEmptyBurnBlocks(1);
     expect(cancelBtcCommitment(alice, digest(), carol).type).toBe("ok");
@@ -556,7 +556,7 @@ describe("bond-bridge: committing and revealing an address", () => {
     expect(announceBtcAddress(alice, ALICE_SATS, aliceAddress).type).toBe("ok");
 
     simnet.mineEmptyBurnBlocks(COMMIT_TTL);
-    expect(cancelBtcAddress(aliceAddress, carol)).toBeErr(Cl.uint(308)); // LIVE
+    expect(cancelBtcAddress(aliceAddress, carol)).toBeErr(Cl.uint(4008)); // LIVE
     expect(cancelBtcAddress(aliceAddress, alice).type).toBe("ok"); // its owner
   });
 
@@ -564,7 +564,7 @@ describe("bond-bridge: committing and revealing an address", () => {
     bootstrap();
     // the allocation is the whole allowance now, so filling it takes all of it
     expect(commitBtcAddress(alice, digest(), ALLOWANCE_SATS).type).toBe("ok");
-    expect(deposit(bob, 1)).toBeErr(Cl.uint(105)); // ALLOCATION_EXCEEDED
+    expect(deposit(bob, 1)).toBeErr(Cl.uint(2005)); // ALLOCATION_EXCEEDED
     cancelBtcCommitment(alice, digest());
     expect(deposit(bob, 1).type).toBe("ok");
   });
@@ -659,11 +659,11 @@ describe("bond-bridge: completing a deposit", () => {
     // the right txid, someone else's bytes
     expect(
       completeBtcDeposit(funded.txid, other.tx, other.parents),
-    ).toBeErr(Cl.uint(316)); // TXID_MISMATCH
+    ).toBeErr(Cl.uint(4016)); // TXID_MISMATCH
     // a txid the registry has never seen
     expect(
       completeBtcDeposit(other.txid, other.tx, other.parents),
-    ).toBeErr(Cl.uint(304)); // NOT_SWEPT
+    ).toBeErr(Cl.uint(4004)); // NOT_SWEPT
   });
 
   it("refuses a parent that is not the one the input names", () => {
@@ -676,10 +676,10 @@ describe("bond-bridge: completing a deposit", () => {
     );
     expect(
       completeBtcDeposit(funded.txid, funded.tx, [impostor]),
-    ).toBeErr(Cl.uint(319)); // PARENT_MISMATCH
+    ).toBeErr(Cl.uint(4019)); // PARENT_MISMATCH
     // and no parent at all is no proof either
     expect(completeBtcDeposit(funded.txid, funded.tx, [])).toBeErr(
-      Cl.uint(318), // INPUT_COUNT
+      Cl.uint(4018), // INPUT_COUNT
     );
   });
 
@@ -691,7 +691,7 @@ describe("bond-bridge: completing a deposit", () => {
 
     expect(
       completeBtcDeposit(funded.txid, funded.tx, funded.parents),
-    ).toBeErr(Cl.uint(302)); // UNKNOWN_ANNOUNCEMENT
+    ).toBeErr(Cl.uint(4002)); // UNKNOWN_ANNOUNCEMENT
   });
 
   it("refuses a deposit with an input from anywhere else", () => {
@@ -708,11 +708,11 @@ describe("bond-bridge: completing a deposit", () => {
 
     expect(
       completeBtcDeposit(funded.txid, funded.tx, funded.parents),
-    ).toBeErr(Cl.uint(320)); // FOREIGN_INPUT
+    ).toBeErr(Cl.uint(4020)); // FOREIGN_INPUT
     expect(announceBtcAddress(bob, ALICE_SATS, bobAddress).type).toBe("ok");
     expect(
       completeBtcDeposit(funded.txid, funded.tx, funded.parents),
-    ).toBeErr(Cl.uint(320));
+    ).toBeErr(Cl.uint(4020));
   });
 
   it("cannot be pointed at the wrong output of the right parent", () => {
@@ -733,7 +733,7 @@ describe("bond-bridge: completing a deposit", () => {
     );
     sweep(txidOf(tx), ALICE_SATS);
 
-    expect(completeBtcDeposit(txidOf(tx), tx, [parent])).toBeErr(Cl.uint(302));
+    expect(completeBtcDeposit(txidOf(tx), tx, [parent])).toBeErr(Cl.uint(4002));
   });
 
   it("will not credit an announcement younger than the sweep", () => {
@@ -746,7 +746,7 @@ describe("bond-bridge: completing a deposit", () => {
 
     expect(
       completeBtcDeposit(funded.txid, funded.tx, funded.parents),
-    ).toBeErr(Cl.uint(321)); // ANNOUNCED_TOO_LATE
+    ).toBeErr(Cl.uint(4021)); // ANNOUNCED_TOO_LATE
   });
 
   it("credits one bitcoin deposit once", () => {
@@ -761,7 +761,7 @@ describe("bond-bridge: completing a deposit", () => {
     expect(announceBtcAddress(alice, ALICE_SATS, aliceAddress).type).toBe("ok");
     expect(
       completeBtcDeposit(funded.txid, funded.tx, funded.parents),
-    ).toBeErr(Cl.uint(321));
+    ).toBeErr(Cl.uint(4021));
   });
 
   it("credits what arrived when the signers' fee eats into the deposit", () => {
@@ -810,7 +810,7 @@ describe("bond-bridge: completing a deposit", () => {
 
     expect(
       completeBtcDeposit(funded.txid, funded.tx, funded.parents),
-    ).toBeErr(Cl.uint(305)); // MISDIRECTED
+    ).toBeErr(Cl.uint(4005)); // MISDIRECTED
   });
 
   it("refuses what it cannot read, and more inputs than it will take", () => {
@@ -822,11 +822,11 @@ describe("bond-bridge: completing a deposit", () => {
     // a marker with no witness stacks behind it is not a transaction at all
     const broken = `${funded.tx.slice(0, 8)}0001${funded.tx.slice(8)}`;
     expect(completeBtcDeposit(funded.txid, broken, funded.parents)).toBeErr(
-      Cl.uint(317), // MALFORMED_TX
+      Cl.uint(4017), // MALFORMED_TX
     );
     // nor is a parent that does not deserialize
     expect(completeBtcDeposit(funded.txid, funded.tx, ["00"])).toBeErr(
-      Cl.uint(317),
+      Cl.uint(4017),
     );
 
     // nine inputs is one more than the contract will take a parent for
@@ -839,7 +839,7 @@ describe("bond-bridge: completing a deposit", () => {
     sweep(nine.txid, ALICE_SATS, treasuryPrincipal(), 1);
     expect(
       completeBtcDeposit(nine.txid, nine.tx, nine.parents.slice(0, 8), 1),
-    ).toBeErr(Cl.uint(317));
+    ).toBeErr(Cl.uint(4017));
   });
 
   it("reads a parent of any shape: no scan bound to fall foul of", () => {
@@ -873,7 +873,7 @@ describe("bond-bridge: completing a deposit", () => {
     );
     sweep(txidOf(tx), ALICE_SATS);
 
-    expect(completeBtcDeposit(txidOf(tx), tx, [parent])).toBeErr(Cl.uint(317));
+    expect(completeBtcDeposit(txidOf(tx), tx, [parent])).toBeErr(Cl.uint(4017));
   });
 
   it("refuses a deposit funded from a script no address could name", () => {
@@ -891,7 +891,7 @@ describe("bond-bridge: completing a deposit", () => {
     );
     sweep(txidOf(tx), ALICE_SATS);
 
-    expect(completeBtcDeposit(txidOf(tx), tx, [parent])).toBeErr(Cl.uint(315));
+    expect(completeBtcDeposit(txidOf(tx), tx, [parent])).toBeErr(Cl.uint(4015));
   });
 
   it("says what it would make of a transaction before anyone pays for it", () => {
@@ -984,7 +984,7 @@ describe("bond-bridge: leaving over the sBTC bridge", () => {
     expect(btcWithdrawal(requestId).member).toBe(alice);
 
     // pending until the signers rule on it
-    expect(reclaimBtcWithdrawal(requestId)).toBeErr(Cl.uint(310));
+    expect(reclaimBtcWithdrawal(requestId)).toBeErr(Cl.uint(4010));
     expect(settleBtcWithdrawal(requestId, false).type).toBe("ok");
     expect(reclaimBtcWithdrawal(requestId).type).toBe("ok");
 
@@ -995,7 +995,7 @@ describe("bond-bridge: leaving over the sBTC bridge", () => {
 
   it("is the member's call alone", () => {
     readyToLeave();
-    expect(claimPrincipalToBtc(carol, MAX_FEE)).toBeErr(Cl.uint(110));
-    expect(claimPrincipalToBtc(alice, ALICE_SATS)).toBeErr(Cl.uint(116));
+    expect(claimPrincipalToBtc(carol, MAX_FEE)).toBeErr(Cl.uint(2010));
+    expect(claimPrincipalToBtc(alice, ALICE_SATS)).toBeErr(Cl.uint(2016));
   });
 });

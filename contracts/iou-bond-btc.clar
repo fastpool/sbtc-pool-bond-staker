@@ -5,8 +5,8 @@
 ;; `bond-btc-locked`, mirrors sats the bridge holds in an sBTC withdrawal, so a
 ;; wallet shows where the sBTC is. Only `bond-staker` moves either.
 
-(define-constant ERR_UNAUTHORIZED (err u500))
-(define-constant ERR_NOT_TRANSFERABLE (err u501))
+(define-constant ERR_UNAUTHORIZED (err u6000))
+(define-constant ERR_NOT_TRANSFERABLE (err u6001))
 
 ;; Only caller of the mint, burn, lock and unlock functions.
 (define-constant CONTROLLER .bond-staker)

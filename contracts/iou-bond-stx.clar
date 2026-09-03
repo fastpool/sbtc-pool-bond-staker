@@ -5,8 +5,8 @@
 ;; paid out on Stacks, so there is no locked counterpart. Only `bond-staker`
 ;; mints or burns.
 
-(define-constant ERR_UNAUTHORIZED (err u500))
-(define-constant ERR_NOT_TRANSFERABLE (err u501))
+(define-constant ERR_UNAUTHORIZED (err u7000))
+(define-constant ERR_NOT_TRANSFERABLE (err u7001))
 
 ;; Only caller of `mint` and `burn`.
 (define-constant CONTROLLER .bond-staker)

@@ -87,16 +87,16 @@ describe("esbee-dao: who votes and with how much", () => {
 
   it("lets nobody outside the pool propose or vote", () => {
     expect(callDao("propose-sweep", [Cl.principal(carol)], carol)).toBeErr(
-      Cl.uint(401), // NOT_A_MEMBER
+      Cl.uint(5001), // NOT_A_MEMBER
     );
     callDao("propose-sweep", [Cl.principal(carol)], alice);
-    expect(vote(0, true, carol)).toBeErr(Cl.uint(401));
+    expect(vote(0, true, carol)).toBeErr(Cl.uint(5001));
   });
 
   it("counts a vote once, at the weight held when it was cast", () => {
     callDao("propose-sweep", [Cl.principal(carol)], alice);
     expect(vote(0, true, alice).type).toBe("ok");
-    expect(vote(0, false, alice)).toBeErr(Cl.uint(406)); // ALREADY_VOTED
+    expect(vote(0, false, alice)).toBeErr(Cl.uint(5006)); // ALREADY_VOTED
     expect(Number(proposal(0).yes)).toBe(weight(alice));
     expect(
       Number(plain(readDao("get-vote", [Cl.uint(0), Cl.principal(alice)])).weight),
@@ -115,7 +115,7 @@ describe("esbee-dao: nothing passes quietly", () => {
     vote(0, true, bob);
     expect(status(0)["voting-open"]).toBe(true);
     expect(callDao("execute-sweep", [Cl.uint(0)], carol)).toBeErr(
-      Cl.uint(405), // VOTING_OPEN
+      Cl.uint(5005), // VOTING_OPEN
     );
   });
 
@@ -124,7 +124,7 @@ describe("esbee-dao: nothing passes quietly", () => {
     advanceToBurnHeight(Number(status(0)["executable-from"]));
     expect(status(0)["met-quorum"]).toBe(false);
     expect(callDao("execute-sweep", [Cl.uint(0)], carol)).toBeErr(
-      Cl.uint(407), // NO_QUORUM
+      Cl.uint(5007), // NO_QUORUM
     );
   });
 
@@ -135,7 +135,7 @@ describe("esbee-dao: nothing passes quietly", () => {
     expect(status(0)["met-quorum"]).toBe(true);
     expect(status(0).approved).toBe(false);
     expect(callDao("execute-sweep", [Cl.uint(0)], carol)).toBeErr(
-      Cl.uint(408), // REJECTED
+      Cl.uint(5008), // REJECTED
     );
   });
 
@@ -148,7 +148,7 @@ describe("esbee-dao: nothing passes quietly", () => {
     expect(status(0).approved).toBe(true);
     expect(status(0).ready).toBe(false);
     expect(callDao("execute-sweep", [Cl.uint(0)], carol)).toBeErr(
-      Cl.uint(409), // TOO_EARLY
+      Cl.uint(5009), // TOO_EARLY
     );
 
     advanceToBurnHeight(Number(s["executable-from"]));
@@ -160,7 +160,7 @@ describe("esbee-dao: nothing passes quietly", () => {
     advanceToBurnHeight(simnet.burnBlockHeight + 1008);
     expect(status(0).expired).toBe(true);
     expect(callDao("execute-sweep", [Cl.uint(0)], carol)).toBeErr(
-      Cl.uint(410), // EXPIRED
+      Cl.uint(5010), // EXPIRED
     );
   });
 
@@ -174,14 +174,14 @@ describe("esbee-dao: nothing passes quietly", () => {
 
     expect(status(0)["same-epoch"]).toBe(false);
     expect(callDao("execute-sweep", [Cl.uint(0)], carol)).toBeErr(
-      Cl.uint(413), // EPOCH_MOVED
+      Cl.uint(5013), // EPOCH_MOVED
     );
   });
 
   it("cannot spend one mandate on another power", () => {
     passProposal(0);
     expect(callDao("execute-trust-signer", [Cl.uint(0)], carol)).toBeErr(
-      Cl.uint(412), // WRONG_KIND
+      Cl.uint(5012), // WRONG_KIND
     );
   });
 
@@ -192,7 +192,7 @@ describe("esbee-dao: nothing passes quietly", () => {
     passProposal(1);
     expect(callDao("execute-trust-signer", [Cl.uint(1)], carol).type).toBe("ok");
     expect(callDao("execute-trust-signer", [Cl.uint(1)], carol)).toBeErr(
-      Cl.uint(411), // ALREADY_EXECUTED
+      Cl.uint(5011), // ALREADY_EXECUTED
     );
   });
 
@@ -201,7 +201,7 @@ describe("esbee-dao: nothing passes quietly", () => {
     // whole transaction reverts -- including the executed flag, so the mandate
     // can still be spent once the underlying call would succeed
     passProposal(0);
-    expect(callDao("execute-sweep", [Cl.uint(0)], carol)).toBeErr(Cl.uint(114));
+    expect(callDao("execute-sweep", [Cl.uint(0)], carol)).toBeErr(Cl.uint(2014));
     expect(status(0).executed).toBe(false);
     expect(status(0).ready).toBe(true);
   });
@@ -262,7 +262,7 @@ describe("esbee-dao: exercising the operator's powers", () => {
         ],
         carol,
       ).result,
-    ).toBeErr(Cl.uint(414)); // WRONG_TARGET
+    ).toBeErr(Cl.uint(5014)); // WRONG_TARGET
   });
 
   it("cannot vote itself out of the operator seat", () => {
@@ -274,7 +274,7 @@ describe("esbee-dao: exercising the operator's powers", () => {
     );
     passProposal(0);
     expect(callDao("execute-operator-change", [Cl.uint(0)], carol)).toBeErr(
-      Cl.uint(100), // bond-staker UNAUTHORIZED
+      Cl.uint(2000), // bond-staker UNAUTHORIZED
     );
   });
 });
@@ -297,14 +297,14 @@ describe("esbee-dao: skipping a bond", () => {
 
     // and the bond they skipped is now unbindable, by anyone
     setupBond(NEXT_BOND_INDEX);
-    expect(bindNextBond(carol)).toBeErr(Cl.uint(103)); // BOND_NOT_FOUND
+    expect(bindNextBond(carol)).toBeErr(Cl.uint(2003)); // BOND_NOT_FOUND
   });
 
   it("spends a mandate on the power it was raised for and no other", () => {
     callDao("propose-next-bond", [Cl.uint(NEXT_BOND_INDEX + 1)], alice);
     passProposal(0);
     expect(callDao("execute-sweep", [Cl.uint(0)], carol)).toBeErr(
-      Cl.uint(412), // WRONG_KIND
+      Cl.uint(5012), // WRONG_KIND
     );
   });
 

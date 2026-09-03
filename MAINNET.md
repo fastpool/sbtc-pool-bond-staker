@@ -58,7 +58,7 @@ block from 965357:
 
 The bind deadline is start − prepare − `STAKE_WINDOW` − `BIND_NOTICE` =
 966350 − 100 − 288 − 576. `find-next-bond` answers `none` one block later and
-`bind-next-bond` fails with `ERR_BOND_NOT_FOUND (u103)`.
+`bind-next-bond` fails with `ERR_BOND_NOT_FOUND (u2003)`.
 
 Deposits are open from the moment the bond is bound until `stake`; the pool
 requires the STX leg to be paid alongside the sBTC (`get-required-ustx` says

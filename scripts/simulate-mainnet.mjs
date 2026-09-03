@@ -425,7 +425,7 @@ burn blocks to skip : ${advance}
       // Two writes, because the bridge checks both halves of what a real sweep
       // does: the sBTC has to exist in the treasury, and the registry has to
       // record the deposit as completed. Minting alone leaves
-      // `complete-btc-deposit` returning ERR_DEPOSIT_NOT_SWEPT (u304) --
+      // `complete-btc-deposit` returning ERR_DEPOSIT_NOT_SWEPT (u4004) --
       // `get-swept-deposit` reads sbtc-registry, not the token.
       //
       // Done by evaluating inside each contract rather than by calling

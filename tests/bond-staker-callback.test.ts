@@ -59,8 +59,8 @@ const carol = accounts.get("wallet_3")!;
 const ALICE_SATS = 10_000_000; // 0.1 BTC
 const BOB_SATS = 2_000_000; // the 0.02 BTC that makes the roll grow
 
-const IN_TRANSIT = Cl.uint(130); // ERR_PRINCIPAL_IN_TRANSIT
-const NOT_STAKED = Cl.uint(107); // ERR_NOT_STAKED
+const IN_TRANSIT = Cl.uint(2030); // ERR_PRINCIPAL_IN_TRANSIT
+const NOT_STAKED = Cl.uint(2007); // ERR_NOT_STAKED
 
 /** Stand the pool up on the callback manager and open its first epoch. */
 function stakeFirstBond() {
@@ -190,7 +190,7 @@ describe("bond-staker: a signer manager that calls back mid-roll", () => {
     expect(rollInto()).toBeErr(IN_TRANSIT);
     // NOTHING_TO_CLAIM, not IN_TRANSIT: the flag came back with the rollback,
     // and what is left is an ordinary empty sync
-    expect(syncRewards()).toBeErr(Cl.uint(114));
+    expect(syncRewards()).toBeErr(Cl.uint(2014));
 
     // and so does one that succeeded
     expect(setCallbackPropagate(false).type).toBe("ok");

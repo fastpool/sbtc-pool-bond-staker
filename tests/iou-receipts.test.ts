@@ -274,7 +274,7 @@ describe("receipts: what nobody but the pool can do", () => {
           [Cl.uint(1), Cl.principal(alice), Cl.principal(bob), Cl.none()],
           alice,
         ).result,
-      ).toBeErr(Cl.uint(501));
+      ).toBeErr(Cl.uint(token === BTC ? 6001 : 7001));
     }
     expect(receipts(alice).btc).toBe(ALICE_SATS);
   });
@@ -292,12 +292,9 @@ describe("receipts: what nobody but the pool can do", () => {
       [STX, "mint"],
       [STX, "burn"],
     ] as const) {
-      expect(simnet.callPublicFn(token, fn, args, alice).result).toBeErr(
-        Cl.uint(500),
-      );
-      expect(simnet.callPublicFn(token, fn, args, deployer).result).toBeErr(
-        Cl.uint(500),
-      );
+      const unauthorized = Cl.uint(token === BTC ? 6000 : 7000);
+      expect(simnet.callPublicFn(token, fn, args, alice).result).toBeErr(unauthorized);
+      expect(simnet.callPublicFn(token, fn, args, deployer).result).toBeErr(unauthorized);
     }
     receiptsMatch();
   });

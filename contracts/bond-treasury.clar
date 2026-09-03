@@ -5,7 +5,7 @@
 ;; address, never to the pool. Moves sBTC only for `bond-staker` (payout) and
 ;; `bond-bridge` (withdrawal request). Deploy before both.
 
-(define-constant ERR_UNAUTHORIZED (err u200))
+(define-constant ERR_UNAUTHORIZED (err u3000))
 
 ;; Only caller of `payout`.
 (define-constant CONTROLLER .bond-staker)

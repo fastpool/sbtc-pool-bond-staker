@@ -43,6 +43,12 @@ Deploy in that order — each calls the ones above it and is called by none of
 them, so there is no cycle to break. `bond-treasury` and the receipts name
 their callers as principal values, which do not have to exist yet.
 
+Each contract owns a block of error codes, so a code that bubbles up through
+`try!` names its origin: `bond-staker` u2000–2099, `bond-treasury` u3000,
+`bond-bridge` u4000–4099, `esbee-dao` u5000–5099, `iou-bond-btc` u6000,
+`iou-bond-stx` u7000. Below u1000 is pox-5 and sBTC (`sbtc-deposit` u3xx,
+`sbtc-withdrawal` u5xx); the Fast Pool signer manager uses u1000–1017.
+
 Because the principal lives in the treasury, any sBTC `bond-staker` holds is
 reward — there is no reserve to net off before splitting a payout. The STX leg
 is the exception: pox-5 locks the *staker's* STX, so the pool holds it.
@@ -178,7 +184,7 @@ them before the fact:
   claim on it is a stash, which leaving the live bond does not touch. The one
   exception is the last member out: with no shares left, a pot that had arrived
   could never be split, so that exit is refused while one is waiting
-  (`ERR_REWARDS_PENDING`, u131; `get-early-unstake-preview` reports it as
+  (`ERR_REWARDS_PENDING`, u2031; `get-early-unstake-preview` reports it as
   `sync-first`) and goes through after a `sync-rewards` -- which hands the
   member the whole pot. "Waiting" means what a sync would actually credit,
   `get-recognizable-rewards`: the sub-share remainder the integer split can
@@ -520,7 +526,7 @@ points, not this contract's state.
 Everything the pool holds is otherwise reward, so those few lines are the one
 window where that sentence is not true. `principal-in-transit` records the
 amount, `get-unrecognized-rewards` subtracts it, and `sync-rewards` refuses
-outright while it is set (`ERR_PRINCIPAL_IN_TRANSIT`, u130) rather than
+outright while it is set (`ERR_PRINCIPAL_IN_TRANSIT`, u2030) rather than
 answering about a pool that is mid-move. Every other mutator a manager could
 reach from there moves sBTC, and would blow the roll's own `with-ft`
 post-condition before it could do any harm.
@@ -767,7 +773,7 @@ the published Fast Pool manager, registered with pox-5. Pass a different one as
 the second argument if that changes.
 
 Deploying gets you an address, not a working pool: `find-next-bond` answers
-`none` and `bind-next-bond` returns `ERR_BOND_NOT_FOUND (u103)` until the bond
+`none` and `bind-next-bond` returns `ERR_BOND_NOT_FOUND (u2003)` until the bond
 admin names this contract in a `setup-bond`, and pox-5 only writes allowances
 there, so it has to be a bond that has not been created yet.
 
