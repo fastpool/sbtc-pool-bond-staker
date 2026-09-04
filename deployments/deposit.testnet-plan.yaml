@@ -10,7 +10,9 @@ plan:
     transactions:
     # deposit(sats) -- moves both legs: the STX the sats need at the bound
     # bond's ratio is pulled in the same call, so it only runs once a bond is
-    # bound. 0.045 BTC wants 2.25 STX at bond 6's pricing.
+    # bound. 0.045 BTC wants 2.25 STX at the pricing bonds 3-6 all carry
+    # (stx-value-ratio 1000, min-ustx-ratio 500); a new bond may be priced
+    # differently, so read `get-stake-preview` rather than assuming.
     - transaction-type: contract-call
       contract-id: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM.vault-3
       expected-sender: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM

@@ -4,12 +4,21 @@ What it takes to put this pool on public testnet as `vault-3`. Two earlier
 pools are already published at our address — `vault-1` (the code under `v1/`)
 and `vault-2` (the pool before binding became permissionless) — and neither
 ever staked: each is still bound to a bond whose stake window has closed, with
-everything it holds still queued. The repo side for a third is ready. What is missing is
-not the clock this time but a **grant**: no bond pox-5 has set up allowlists
-`vault-3`, and no bond a bind today could reach has been set up at all.
+everything it holds still queued. The repo side for a third is ready — built,
+planned and tested against the current source. What is missing is a **grant**:
+no bond pox-5 has set up allowlists `vault-3`.
 
-Everything below was re-read off testnet at **burn height 12607**. Heights
-move; re-check with `pnpm run probe:testnet` (see [Re-reading the
+Since the last read this got worse rather than better. **Bond 6 has now been
+set up, and its allowlist carries only `vault-1` and `vault-2`.** `setup-bond`
+inserts each bond once — `map-insert`, `ERR_BOND_ALREADY_SETUP` — and the
+allowlist is fixed there, so bond 6 can never be granted to us. The earliest
+bond we can still be put on is **bond 7**, and its setup window does not open
+until burn 14400. So there is nothing to ask for right now, and nothing to
+bind; publishing is what can happen today.
+
+Everything below was re-read off testnet at **burn height 12751**, Thu 3 Sep
+2026 22:14 UTC, blocks running ~3.97 minutes apiece. Heights move; re-check
+with `pnpm run probe:testnet` (see [Re-reading the
 chain](#re-reading-the-chain)) before acting on any of them.
 
 ## What is already on chain
@@ -30,8 +39,9 @@ that is already published:
 | 3 | 9000 | 10 | yes | `vault-1`, `vault-2`: 1 BTC each | 19 500 sats, not ours |
 | 4 | 10800 | 12 | yes | `vault-1`, `vault-2`: 1 BTC each | 0 |
 | 5 | 12600 | 14 | yes | `vault-1`, `vault-2`: 1 BTC each | 0 |
-| 6 | 14400 | 16 | **no** | — | — |
-| 7 | 16200 | 18 | **no** | — | — |
+| 6 | 14400 | 16 | yes, since 12607 | `vault-1`, `vault-2`: 1 BTC each — **not us, and now unchangeable** | 0 |
+| 7 | 16200 | 18 | **no** — setup opens 14400 | — | — |
+| 8 | 18000 | 20 | **no** — setup opens 16200 | — | — |
 
 Every bond carries `stx-value-ratio = 1000`, `min-ustx-ratio = 500`,
 `target-rate = 1000`, which prices the STX leg at **50 STX per whole BTC** —
@@ -72,7 +82,7 @@ for c in vault-3 bond-treasury-3 iou-bond-btc-3 iou-bond-stx-3 bond-bridge-3 esb
   curl -s -o /dev/null -w "$c %{http_code}\n" \
     https://api.testnet.hiro.so/v2/contracts/interface/$D/$c
 done
-# all four 404 at burn 12607; the two receipts were added later and are new names
+# all six 404 at burn 12751; the two receipts were added later and are new names
 ```
 
 ## The ask: a bond with `vault-3` on it
@@ -83,23 +93,27 @@ before its stake window opens, `BIND_NOTICE + STAKE_WINDOW + prepare` =
 964 blocks ahead of the start. Between the two, a bond is grantable for the
 whole of its setup window but bindable only for the first 836 blocks of it.
 
-At ~4 minutes a burn block, the next two look like this:
+Bond 6 is gone — set up already, without us. The next two reachable bonds, at
+~4 minutes a burn block from 12751:
 
-| | bond 6 | bond 7 |
+| | bond 7 | bond 8 |
 | --- | --- | --- |
-| `setup-bond` opens | 12600 — open now | 14400 — Tue 8 Sep ~14:00 UTC |
-| bind by | **13436 — Sat 5 Sep ~21:00 UTC** | 15236 — Thu 10 Sep ~23:00 UTC |
+| `setup-bond` opens | 14400 — Tue 8 Sep ~11:00 UTC | 16200 — Sun 13 Sep ~14:30 UTC |
+| bind by | **15236 — Thu 10 Sep ~20:00 UTC** | 17036 — Tue 15 Sep ~23:30 UTC |
 | notice ends | bind + 576 | bind + 576 |
-| stake window | 14012 .. 14299 | 15812 .. 16099 |
-| bond starts | 14400 — Tue 8 Sep ~14:00 UTC | 16200 — Sun 13 Sep ~16:00 UTC |
-| L1 unlock | 25200 | 27000 |
+| stake window | 15812 .. 16099 | 17612 .. 17899 |
+| bond starts | 16200 — Sun 13 Sep ~14:30 UTC | 18000 — Fri 18 Sep ~18:00 UTC |
+| L1 unlock | 27000 | 28800 |
 
-So the request to the bond admin is one `setup-bond` call, for bond 6 if it
-can land before burn 13436 and for bond 7 otherwise:
+So the request to the bond admin is one `setup-bond` call, for bond 7 — it
+cannot be made before burn 14400 and has to land before 15236 for a bind to
+follow, a window of 836 blocks, about two and a half days. Bond 8 is the
+fallback if that is missed. The lesson from bond 6 is that the ask has to be
+in the admin's hands *before* the window opens, not after:
 
 ```clarity
 (contract-call? 'ST000000000000000000002AMW42H.pox-5 setup-bond
-  u6            ;; or u7
+  u7            ;; or u8
   u1000         ;; target-rate        -- whatever the admin prices it at
   u1000         ;; stx-value-ratio
   u500          ;; min-ustx-ratio
@@ -107,12 +121,13 @@ can land before burn 13436 and for bond 7 otherwise:
   (list { staker: 'STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM.vault-3, max-sats: u100000000 }))
 ```
 
-A bond 6 or 7 from someone else's request is just as good, as long as the list
-carries our line.
+A bond 7 or 8 from someone else's request is just as good, as long as the list
+carries our line. What is not good enough is a bond set up without it: the
+allowlist is written once, inside `setup-bond`, and bond 6 is the proof.
 
-**The roll target needs a grant too, later.** A pool on bond 6 rolls to bond
-12 (`NEXT_BOND_OFFSET` = 6; bond 13 from bond 7). That bond cannot be set up
-until 1800 blocks before it starts — burn 23400 for bond 12 — so this is a
+**The roll target needs a grant too, later.** A pool on bond 7 rolls to bond
+13 (`NEXT_BOND_OFFSET` = 6; bond 14 from bond 8). That bond cannot be set up
+until 1800 blocks before it starts — burn 25200 for bond 13 — so this is a
 second request, months out, and worth saying now. Without it the pool winds
 down at the end of its term instead of rolling. Nothing is lost that way; it
 just stops.
@@ -123,8 +138,8 @@ Done. For the record:
 
 1. **The names moved to the third generation.** `scripts/build-network.mjs`
    publishes the pool as `vault-3` and the siblings as `bond-treasury-3`,
-   `bond-bridge-3`, `esbee-dao-3` by default, rewriting the 34 references
-   between them. `scripts/make-testnet-plan.mjs` and `Clarinet-testnet.toml`
+   `bond-bridge-3`, `esbee-dao-3` by default, rewriting the 43 references
+   between them. `scripts/make-plan.mjs` and `Clarinet-testnet.toml`
    agree. Both scripts take `--staker-name` and, new, `--suffix`, so a fourth
    generation is `-- --staker-name vault-4 --suffix -4` to both rather than an
    edit; the manifest's six `[contracts.*]` headers still have to be renamed
@@ -150,20 +165,29 @@ requirement), so check the simnet flavour in `contracts/` instead.
 
 ## Prerequisites
 
-Re-read at burn 12607.
+Re-read at burn 12751.
 
 - **Seed phrase: in place.** `settings/Testnet.toml` holds an
   `encrypted_mnemonic_medium` for
   `STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM` — the file is gitignored, and both
   earlier deployments signed with it.
-- **STX at that address: 394.79.** Ample; the plan totals about 1.8 STX at the
-  fee rate in `settings/Testnet.toml`, and the STX leg is 0.5 STX per 0.01 BTC
+- **STX at that address: 394.79.** Ample; the plan's eight transactions total
+  **1.303 STX** at the fee rate in `settings/Testnet.toml` — 0.66 of it the
+  pool itself, 66 010 bytes — and the STX leg is 0.5 STX per 0.01 BTC
   deposited.
 - **sBTC at that address: 0.005**, plus **0.045 recoverable** from `vault-2`
   with one `withdraw`. Enough for a 0.045 BTC test deposit; the testnet sBTC
   bridge for more.
-- **A bond with `vault-3` allowlisted: none.** See [The ask](#the-ask-a-bond-with-vault-3-on-it).
-  This is the one that is actually scarce, and it is not ours to make.
+- **All six names free.** Re-checked at 12751: six 404s, above.
+- **The build and the plan are current.** `pnpm run build:testnet` and
+  `pnpm run plan:testnet STFCGF…` were re-run against this checkout, so
+  `deployments/testnet-plan.yaml` prices the sources that are actually in
+  `build/testnet/`. `clarinet check` on the simnet flavour: 12 contracts,
+  0 errors (124 style warnings). `pnpm test`: 213 passing.
+- **A bond with `vault-3` allowlisted: none, and none askable today.** Bond 6
+  was set up without us and cannot be amended; bond 7's setup window opens at
+  burn 14400. See [The ask](#the-ask-a-bond-with-vault-3-on-it). This is the
+  one thing that is actually scarce, and it is not ours to make.
 
 ## The runbook
 
@@ -201,7 +225,7 @@ these is operator-only:
 
 | # | call | plan | note |
 | --- | --- | --- | --- |
-| 1 | `bind-next-bond()` | `deployments/testnet-bind-next-bond.yaml` | the step with a deadline: burn 13436 for bond 6. `find-next-bond` reports which bond it would take, `none` meaning the call would fail |
+| 1 | `bind-next-bond()` | `deployments/testnet-bind-next-bond.yaml` | the step with a deadline: burn 15236 for bond 7. `find-next-bond` reports which bond it would take, `none` meaning the call would fail |
 | 2 | `withdraw()` on `vault-2` | `deployments/testnet-withdraw-vault-2.yaml` | gets our 0.045 BTC and 2.25 STX back to deposit here |
 | 3 | `deposit(u4500000)` | `deployments/deposit.testnet-plan.yaml` | moves both legs; the STX is pulled in the same call |
 | 4 | `stake(ST1B38…signer-manager)` | — | permissionless, inside the window, once the notice has run |

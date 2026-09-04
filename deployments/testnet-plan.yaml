@@ -29,13 +29,13 @@ plan:
     - transaction-type: contract-publish
       contract-name: vault-3
       expected-sender: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM
-      cost: 659680
+      cost: 660100
       path: build/testnet/vault-3.clar
       clarity-version: 6
     - transaction-type: contract-publish
       contract-name: bond-bridge-3
       expected-sender: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM
-      cost: 275900
+      cost: 275770
       path: build/testnet/bond-bridge-3.clar
       clarity-version: 6
     - transaction-type: contract-publish

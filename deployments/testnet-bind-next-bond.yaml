@@ -12,7 +12,10 @@ plan:
     # earliest bond pox-5 has set up with `vault-3` allowlisted whose notice
     # can still run out before its stake window opens; `find-next-bond` says
     # which one that is, and `none` means the call would fail. Run
-    # `pnpm run probe:testnet` first: it prints the bind deadline.
+    # `pnpm run probe:testnet` first: it prints the bind deadline. At burn
+    # 12751 the earliest reachable bond is 7 -- bond 6 was set up without our
+    # grant -- and bond 7 is not set up yet, so this call cannot succeed until
+    # it is: deadline burn 15236.
     - transaction-type: contract-call
       contract-id: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM.vault-3
       expected-sender: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM
