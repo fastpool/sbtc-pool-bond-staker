@@ -20,7 +20,15 @@ proposals someone is expected to act on or reject on the merits.
 
 | note | designed | what it would do |
 | --- | --- | --- |
-| [tagged-reward-claims.md](tagged-reward-claims.md) | 2026-08-29 | Attribute reward sBTC by the cycle it was earned in rather than the burn height it arrived at, closing the residual half of #2 |
+
+## Talk
+
+[talk/](talk/) is the esbee DAO talk on bitcoin staking through this pool: the
+[article](talk/article-bond-staker-esbee-dao.md), the
+[slides](talk/slides-bitcoin-staking-esbee-dao.md) in markdown, and the two
+scripts that render them -- `pnpm build:slides` for the PDF (LibreOffice
+Writer), `pnpm build:site` for the self-contained reveal.js page in `site/`
+that `pnpm deploy:site` publishes.
 
 ## Shelved
 
@@ -35,3 +43,5 @@ will not let you have, and those findings survive the idea that prompted them.
 | --- | --- | --- |
 | [sip-013-receipt-token.md](sip-013-receipt-token.md) | 2026-08-26 | Replacing `bond-treasury` with a non-transferable SIP-013 semi-fungible token, so a depositor holds something for their sats |
 | [sip-013-transferable.md](sip-013-transferable.md) | 2026-08-26 | The same, made tradeable |
+| [tagged-reward-claims.md](tagged-reward-claims.md) | 2026-08-29 | Attribute reward sBTC by the cycle it was earned in rather than the burn height it arrived at, closing the residual half of #2 |
+

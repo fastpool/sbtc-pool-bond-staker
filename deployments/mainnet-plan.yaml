@@ -1,48 +1,48 @@
 ---
 id: 0
-name: Testnet deployment
-network: testnet
-stacks-node: "https://api.testnet.hiro.so"
-bitcoin-node: "http://blockstack:blockstacksystem@bitcoind.testnet.stacks.co:18332"
+name: Mainnet deployment
+network: mainnet
+stacks-node: "https://api.hiro.so"
+bitcoin-node: "http://blockstack:blockstacksystem@bitcoin.blockstack.com:8332"
 plan:
   batches:
   - id: 0
     transactions:
     - transaction-type: contract-publish
-      contract-name: bond-treasury-3
-      expected-sender: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM
+      contract-name: bond-treasury-1
+      expected-sender: SPFCGF789WX1B737VQYAQ6BG3QYVMJGPDKRKYK00
       cost: 50000
-      path: build/testnet/bond-treasury-3.clar
+      path: build/mainnet/bond-treasury-1.clar
       clarity-version: 6
     - transaction-type: contract-publish
-      contract-name: iou-bond-btc-3
-      expected-sender: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM
+      contract-name: iou-bond-btc-1
+      expected-sender: SPFCGF789WX1B737VQYAQ6BG3QYVMJGPDKRKYK00
       cost: 50000
-      path: build/testnet/iou-bond-btc-3.clar
+      path: build/mainnet/iou-bond-btc-1.clar
       clarity-version: 6
     - transaction-type: contract-publish
-      contract-name: iou-bond-stx-3
-      expected-sender: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM
+      contract-name: iou-bond-stx-1
+      expected-sender: SPFCGF789WX1B737VQYAQ6BG3QYVMJGPDKRKYK00
       cost: 50000
-      path: build/testnet/iou-bond-stx-3.clar
+      path: build/mainnet/iou-bond-stx-1.clar
       clarity-version: 6
     - transaction-type: contract-publish
-      contract-name: vault-3
-      expected-sender: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM
-      cost: 659680
-      path: build/testnet/vault-3.clar
+      contract-name: esbee-dao-bond-staker-1
+      expected-sender: SPFCGF789WX1B737VQYAQ6BG3QYVMJGPDKRKYK00
+      cost: 65968
+      path: build/mainnet/esbee-dao-bond-staker-1.clar
       clarity-version: 6
     - transaction-type: contract-publish
-      contract-name: bond-bridge-3
-      expected-sender: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM
-      cost: 275900
-      path: build/testnet/bond-bridge-3.clar
+      contract-name: bond-bridge-1
+      expected-sender: SPFCGF789WX1B737VQYAQ6BG3QYVMJGPDKRKYK00
+      cost: 27750
+      path: build/mainnet/bond-bridge-1.clar
       clarity-version: 6
     - transaction-type: contract-publish
-      contract-name: esbee-dao-3
-      expected-sender: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM
-      cost: 116660
-      path: build/testnet/esbee-dao-3.clar
+      contract-name: esbee-dao-1
+      expected-sender: SPFCGF789WX1B737VQYAQ6BG3QYVMJGPDKRKYK00
+      cost: 11826
+      path: build/mainnet/esbee-dao-1.clar
       clarity-version: 6
     epoch: '4.0'
   - id: 1
@@ -58,13 +58,13 @@ plan:
     # permissionless -- so what the seat holds is the signer manager, the
     # skip, and the sweep.
     - transaction-type: contract-call
-      contract-id: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM.vault-3
-      expected-sender: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM
+      contract-id: SPFCGF789WX1B737VQYAQ6BG3QYVMJGPDKRKYK00.esbee-dao-bond-staker-1
+      expected-sender: SPFCGF789WX1B737VQYAQ6BG3QYVMJGPDKRKYK00
       method: initialize
       parameters:
-        - "'ST1B38CGQRPXEMRH7B66VXTS22DQTNMSW4YJJ7QK1.signer-manager"
-        - "'STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM"
-      cost: 50000
+        - "'SPMPMA1V6P430M8C91QS1G9XJ95S59JS1TZFZ4Q4.fastpool-max500-signer-manager"
+        - "'SPFCGF789WX1B737VQYAQ6BG3QYVMJGPDKRKYK00"
+      cost: 5000
     epoch: '4.0'
   - id: 2
     transactions:
@@ -77,11 +77,11 @@ plan:
     # call *from the DAO*, by vote, once the pool has staked and the members
     # have the shares to vote with.
     - transaction-type: contract-call
-      contract-id: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM.vault-3
-      expected-sender: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM
+      contract-id: SPFCGF789WX1B737VQYAQ6BG3QYVMJGPDKRKYK00.esbee-dao-bond-staker-1
+      expected-sender: SPFCGF789WX1B737VQYAQ6BG3QYVMJGPDKRKYK00
       method: update-operator
       parameters:
-        - "'STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM.esbee-dao-3"
+        - "'SPFCGF789WX1B737VQYAQ6BG3QYVMJGPDKRKYK00.esbee-dao-1"
         - "true"
-      cost: 50000
+      cost: 5000
     epoch: '4.0'

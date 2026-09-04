@@ -58,6 +58,18 @@ path = "contracts/bond-treasury.clar"
 clarity_version = 6
 epoch = "4.0"
 
+# Receipt tokens for a member's principal. Deployed before `bond-staker`, which
+# mints and burns them; their reference back is only a principal value.
+[contracts.iou-bond-btc]
+path = "contracts/iou-bond-btc.clar"
+clarity_version = 6
+epoch = "4.0"
+
+[contracts.iou-bond-stx]
+path = "contracts/iou-bond-stx.clar"
+clarity_version = 6
+epoch = "4.0"
+
 [contracts.bond-staker]
 path = "contracts/bond-staker.clar"
 clarity_version = 6

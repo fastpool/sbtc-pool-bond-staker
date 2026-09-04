@@ -1,194 +1,178 @@
 # Testnet run
 
-What it takes to put this pool on public testnet. The repo side is ready, the
-key and the funds are in place, and an earlier pool (`vault-1`, the code kept
-under `v1/`) is already published. What is left is a deadline: bond 3 is the
-last grant still in reach, and binding it closes around burn 8136.
+What it takes to put this pool on public testnet as `vault-3`. Two earlier
+pools are already published at our address — `vault-1` (the code under `v1/`)
+and `vault-2` (the pool before binding became permissionless) — and neither
+ever staked: each is still bound to a bond whose stake window has closed, with
+everything it holds still queued. The repo side for a third is ready. What is missing is
+not the clock this time but a **grant**: no bond pox-5 has set up allowlists
+`vault-3`, and no bond a bind today could reach has been set up at all.
 
-Everything below was re-read off testnet at **burn height 7994**. Heights move;
-re-check with the commands in [Re-reading the chain](#re-reading-the-chain)
-before acting on any deadline here.
+Everything below was re-read off testnet at **burn height 12607**. Heights
+move; re-check with `pnpm run probe:testnet` (see [Re-reading the
+chain](#re-reading-the-chain)) before acting on any of them.
 
 ## What is already on chain
 
 | | |
 | --- | --- |
-| pox-5 | `ST000000000000000000002AMW42H.pox-5` |
+| pox-5 | `ST000000000000000000002AMW42H.pox-5` — 900-block cycles, 100-block prepare phase, bonds spaced two cycles apart |
 | sBTC | `SN3VMHXEN64ZZF71JQ5VESXDWTR301XTTXGF4J8F1` |
 | signer manager | `ST1B38CGQRPXEMRH7B66VXTS22DQTNMSW4YJJ7QK1.signer-manager` — registered with pox-5, so `initialize` will accept it |
+| bond admin | `ST1V2ASRWGR81W7GBN1Z4W2JQKXJWCADPVZG30X45` — the only principal `setup-bond` accepts, so the only one who can grant us a bond |
 | our address | `STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM` |
 
-**Bond 3 is the one to aim at.** It carries an allowlist grant for us and its
-windows are still open:
+Every bond set up so far has started, and every grant on them names a pool
+that is already published:
 
-| bond | starts (burn) | cycle | L1 unlock | allowance for `vault-1` and `vault-2` | staked so far |
+| bond | starts (burn) | cycle | set up | allowlist | staked |
 | --- | --- | --- | --- | --- | --- |
-| 3 | 9000 | 10 | 19350 | 100 000 000 sats (1 BTC) each | 19 500 sats, none of it ours |
+| 3 | 9000 | 10 | yes | `vault-1`, `vault-2`: 1 BTC each | 19 500 sats, not ours |
+| 4 | 10800 | 12 | yes | `vault-1`, `vault-2`: 1 BTC each | 0 |
+| 5 | 12600 | 14 | yes | `vault-1`, `vault-2`: 1 BTC each | 0 |
+| 6 | 14400 | 16 | **no** | — | — |
+| 7 | 16200 | 18 | **no** | — | — |
 
-Bonds 1 and 2 carry the same grants and are past their bind deadline under the
-audited constants — see [Bond 3 is the last one in
-reach](#bond-3-is-the-last-one-in-reach). Bond 4 onward do not exist and carry
-no grant.
+Every bond carries `stx-value-ratio = 1000`, `min-ustx-ratio = 500`,
+`target-rate = 1000`, which prices the STX leg at **50 STX per whole BTC** —
+0.5 STX per 0.01 BTC. The contract reads all of this from pox-5, so nothing
+needs configuring, but a new bond can be priced differently.
 
-Bond 3 carries `stx-value-ratio = 1000`, `min-ustx-ratio = 500`,
-`target-rate = 1000`. That prices the STX leg at **50 STX per whole BTC** —
-0.5 STX for a 0.01 BTC test deposit. The contract reads all of this from
-pox-5, so nothing needs configuring.
+The two pools stand where their last bind left them:
 
-The cycle here is 900 burn blocks and bonds are spaced two cycles apart.
+| pool | bound to | stake window | queued | of which ours |
+| --- | --- | --- | --- | --- |
+| `vault-1` | bond 3 | closed at 9000 | 5 000 000 sats, 2.5 STX | nothing |
+| `vault-2` | bond 5 | closed at 12600 | 59 499 336 sats, 29.75 STX | 4 500 000 sats, 2.25 STX |
+
+Neither has an epoch, and pox-5 custodies nothing for either. Everything in
+them is still queued, and `withdraw` returns it in full — see [Retiring
+`vault-2`](#retiring-vault-2-and-vault-1).
 
 ### The allowlist decides the contract's name
 
-`get-bond-allowance` is keyed on the staker's *principal*, and the grants name
-`STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM.vault-1` / `.vault-2`. pox-5 only
-inserts allowances inside `setup-bond`, so these cannot be added to later or
-pointed at a different name.
+`get-bond-allowance` is keyed on the staker's *principal*. pox-5 only inserts
+allowances inside `setup-bond`, from a list the bond admin passes, so a grant
+cannot be added to a bond later and cannot be pointed at a different name. A
+pool published under a name no grant mentions can never stake.
 
-`vault-1` was published at block 108893 and carries the pool as it was before
-members could unstake mid-term — the code now kept under `v1/`. So of the pair,
-**`vault-2` is the free one, and that is what the build produces.** It is a
-rename in the testnet build, not a code change, and `pnpm run build:testnet`
-does it by default — the name is a property of the network, not a flag to
-remember. See [What has to change](#what-has-to-change-in-the-repo).
+The grants so far spell `STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM.vault-1` and
+`.vault-2`, and both names are taken — a contract name can never be reused at
+an address. So the third pool is **`vault-3`**, and the grant has to be asked
+for under that name. `pnpm run build:testnet` produces it by default: the name
+is a property of the network, not a flag to remember. Its siblings take
+a `-3` for the duller reason that their unsuffixed and `-2` names are spent
+too; see [What has to change](#what-has-to-change-in-the-repo).
 
-### The siblings carry a `-2` too
-
-A contract name can never be reused at an address, and `bond-treasury`,
-`bond-bridge` and `esbee-dao` were all published alongside `vault-1`. Each is
-wired to that pool by a constant that cannot be re-pointed, so the new pool
-needs three of its own. `build:testnet` appends `-2` to all three, and rewrites
-every reference between them.
-
-The staker's own name is the exception: it is fixed by the grants, which is why
-it is `vault-2` rather than `bond-staker-2`. That also rules out deploying from
-a different address — the grants name *this* one.
-
-Checked, not assumed:
+Checked, not assumed — all six free:
 
 ```bash
 D=STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM
-for c in vault-2 bond-treasury-2 bond-bridge-2 esbee-dao-2; do
+for c in vault-3 bond-treasury-3 iou-bond-btc-3 iou-bond-stx-3 bond-bridge-3 esbee-dao-3; do
   curl -s -o /dev/null -w "$c %{http_code}\n" \
     https://api.testnet.hiro.so/v2/contracts/interface/$D/$c
 done
-# all four 404 — free
-
-## Bond 3 is the last one in reach
-
-> Written for the `vault-2` deployment, which predates `bind-next-bond`. The
-> deployed contract still has `bind-bond(index, allocation, min-sats)`; the
-> source in `contracts/` no longer does. Bond 3 came and went unstaked and the
-> pool is bound to bond 4 — the sums below are kept because they are how the
-> window is worked out, not because bond 3 is still live.
-
-`stake` only runs once `BIND_NOTICE` (576 burn blocks) has elapsed since the
-bind, and only inside the `STAKE_WINDOW` (288 blocks) before the bond starts.
-Those two windows have to overlap, which is what put bonds 1 and 2 out of
-reach — both started long before a bind today could clear its notice. Bond 3
-still works:
-
-```
-now                        7994
-bind by                    8136   <- leaves the whole stake window
-absolute last bind         8423   <- leaves a sliver of it, and see below
-notice ends                bind + 576
-stake window               8712 .. 8999
-bond 3 starts              9000
+# all four 404 at burn 12607; the two receipts were added later and are new names
 ```
 
-That is roughly 140 blocks — call it a day — to publish four contracts,
-`initialize`, seat the DAO and bind. The publishes and the two calls are three
-confirmed batches, so start early rather than at 8100.
+## The ask: a bond with `vault-3` on it
 
-`bind-next-bond` will not take the "sliver" line at all. It refuses any period
-whose notice would run past the *opening* of the stake window, and that window
-now closes where the prepare phase before the bond opens rather than at the
-start — pox-5 refuses to register a staker there. So the bind deadline is
-`BIND_NOTICE + STAKE_WINDOW + prepare-cycle-length` ahead of the start, and a
-notice ending any later is a bind that can never be staked.
+`setup-bond` can only be called inside the two cycles before a bond starts —
+1800 blocks — and `bind-next-bond` refuses any bond whose notice cannot run out
+before its stake window opens, `BIND_NOTICE + STAKE_WINDOW + prepare` =
+964 blocks ahead of the start. Between the two, a bond is grantable for the
+whole of its setup window but bindable only for the first 836 blocks of it.
 
-Missing it is not fatal, only slow: an unbound pool is inert and costs nothing
-to leave standing, and the next grant would be a request to whoever runs
-`setup-bond`. But there is no bond 4, so a miss means waiting on someone else.
+At ~4 minutes a burn block, the next two look like this:
 
-**The roll target must exist before the roll.** A pool on bond 3 rolls to bond 9
-(`NEXT_BOND_OFFSET` = 6), which does not exist and has no grant — confirmed
-`none` at 7994. Unless bond 9 is created with `vault-2` allowlisted, the pool
-winds down at the end of its term instead of rolling. Worth asking for
-alongside anything else.
+| | bond 6 | bond 7 |
+| --- | --- | --- |
+| `setup-bond` opens | 12600 — open now | 14400 — Tue 8 Sep ~14:00 UTC |
+| bind by | **13436 — Sat 5 Sep ~21:00 UTC** | 15236 — Thu 10 Sep ~23:00 UTC |
+| notice ends | bind + 576 | bind + 576 |
+| stake window | 14012 .. 14299 | 15812 .. 16099 |
+| bond starts | 14400 — Tue 8 Sep ~14:00 UTC | 16200 — Sun 13 Sep ~16:00 UTC |
+| L1 unlock | 25200 | 27000 |
 
-### Retiring `vault-1` first
+So the request to the bond admin is one `setup-bond` call, for bond 6 if it
+can land before burn 13436 and for bond 7 otherwise:
 
-`vault-1` is bound to bond 3 as well, with **15 000 000 sats queued** and
-nothing staked — `epoch-count` is 0 and pox-5 custodies nothing for it. Its
-grant is separate from `vault-2`'s, so it is not in the way; but the queued
-deposits are real, and `withdraw` returns them in full for as long as the pool
-never stakes. Do that before letting its bind lapse, or the sats sit in a pool
-nobody is running.
+```clarity
+(contract-call? 'ST000000000000000000002AMW42H.pox-5 setup-bond
+  u6            ;; or u7
+  u1000         ;; target-rate        -- whatever the admin prices it at
+  u1000         ;; stx-value-ratio
+  u500          ;; min-ustx-ratio
+  0x21032853a683729ff79dc33bce675d83892cf0bad4fc15462225de42d7b88ed89292ac  ;; early-unlock-bytes, as on bonds 3-5
+  (list { staker: 'STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM.vault-3, max-sats: u100000000 }))
+```
+
+A bond 6 or 7 from someone else's request is just as good, as long as the list
+carries our line.
+
+**The roll target needs a grant too, later.** A pool on bond 6 rolls to bond
+12 (`NEXT_BOND_OFFSET` = 6; bond 13 from bond 7). That bond cannot be set up
+until 1800 blocks before it starts — burn 23400 for bond 12 — so this is a
+second request, months out, and worth saying now. Without it the pool winds
+down at the end of its term instead of rolling. Nothing is lost that way; it
+just stops.
 
 ## What has to change in the repo
 
-Nothing — this is done. For the record, what it took:
+Done. For the record:
 
-1. **Every contract is named per network.** `scripts/build-network.mjs` carries
-   the names alongside the two protocol addresses it already rewrote, with the
-   same fail-if-anything-is-left check: the pool becomes `vault-2` because the
-   grants say so, and the three siblings take a `-2` because their unsuffixed
-   names are spent. It rewrites all 32 references between them and writes each
-   contract out under its new file name. `Clarinet-testnet.toml` and the
-   generated plan agree. Mainnet keeps every source name.
+1. **The names moved to the third generation.** `scripts/build-network.mjs`
+   publishes the pool as `vault-3` and the siblings as `bond-treasury-3`,
+   `bond-bridge-3`, `esbee-dao-3` by default, rewriting the 34 references
+   between them. `scripts/make-testnet-plan.mjs` and `Clarinet-testnet.toml`
+   agree. Both scripts take `--staker-name` and, new, `--suffix`, so a fourth
+   generation is `-- --staker-name vault-4 --suffix -4` to both rather than an
+   edit; the manifest's six `[contracts.*]` headers still have to be renamed
+   by hand.
 
-   `--staker-name` overrides the pool's name, for a grant that spells something
-   else again. The build directory is emptied before each run, so a build under
-   one name cannot leave the other lying next to it.
+2. **The plans are for the current source.** `deployments/testnet-plan.yaml`
+   is regenerated; `testnet-bind-next-bond.yaml` is the argument-free bind;
+   `deposit.testnet-plan.yaml` points at `vault-3`. The old
+   `testnet-bind-bond-4.yaml` — `bind-bond(index, allocation, min-sats)` on
+   the deployed `vault-2` — is gone: that call is spent, and the source no
+   longer has the function. `testnet-withdraw-vault-2.yaml` takes our deposit
+   back out of the old pool.
 
-2. **The DAO is in the testnet pipeline.** It was missing from both the testnet
-   manifest and the deployment plan, so it would not have shipped at all. The
-   plan now publishes all four contracts and seats `esbee-dao-2` as an operator
-   in a third batch.
+3. **The chain can be re-read in one command.** `scripts/probe-chain.mjs`
+   prints the burn height, the bonds around it with their grants and bind
+   deadlines worked out the way `bind-next-bond` works them out, and where
+   each published pool stands. `pnpm run probe:testnet`.
 
-3. **The fuzzing surface is stripped on the way out.** `bond-staker.clar`
-   carries its invariants, properties and pox-5 stand-ins inline behind
-   `;; #[env(simnet)]`. `build:testnet` removes those forms, so what lands in
-   `build/testnet/` is the deployable contract and nothing but a short note
-   saying what was taken out. Clarinet strips them again at publish, and
-   `clarinet check` compiles the project both ways.
-
-4. Nothing else. The pox-5 boot address in the source is already the testnet
-   one; `build:testnet` only has to swap sBTC.
-
-Verified: `clarinet check` passes both ways (9 contracts each), and the suite is
-167 green with the fuzzer clean in both modes. Note that `clarinet check` cannot
-be run against `Clarinet-testnet.toml` itself — testnet sBTC is not fetchable as
-a requirement, so the manifest has none and every sBTC call reads as unresolved.
-That is pre-existing; check the simnet flavour in `contracts/` instead.
+The rest is as it was: the fuzzing surface is stripped on the way out, the
+DAO is in the pipeline, `clarinet check` cannot be run against
+`Clarinet-testnet.toml` itself (testnet sBTC is not fetchable as a
+requirement), so check the simnet flavour in `contracts/` instead.
 
 ## Prerequisites
 
-Re-read at burn 7994. The first deployment cleared all of these; what is left
-is the clock.
+Re-read at burn 12607.
 
 - **Seed phrase: in place.** `settings/Testnet.toml` holds an
   `encrypted_mnemonic_medium` for
-  `STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM` — the file is gitignored, and the
-  first deployment signed with it.
-- **STX at that address: 396.25.** Ample; the plan totals about 1.4 STX at the
+  `STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM` — the file is gitignored, and both
+  earlier deployments signed with it.
+- **STX at that address: 394.79.** Ample; the plan totals about 1.8 STX at the
   fee rate in `settings/Testnet.toml`, and the STX leg is 0.5 STX per 0.01 BTC
   deposited.
-- **sBTC at that address: 0.** The earlier deposits moved it into `vault-1`'s
-  treasury. Mint more through the testnet sBTC bridge before depositing, or
-  withdraw from `vault-1` first — see [Retiring
-  `vault-1`](#retiring-vault-1-first).
-- **A reachable bond: bond 3, until burn 8136.** See [Bond 3 is the last one in
-  reach](#bond-3-is-the-last-one-in-reach). This is the one that is actually
-  scarce.
+- **sBTC at that address: 0.005**, plus **0.045 recoverable** from `vault-2`
+  with one `withdraw`. Enough for a 0.045 BTC test deposit; the testnet sBTC
+  bridge for more.
+- **A bond with `vault-3` allowlisted: none.** See [The ask](#the-ask-a-bond-with-vault-3-on-it).
+  This is the one that is actually scarce, and it is not ours to make.
 
 ## The runbook
 
-Everything but the clock is in place, so this can run now:
+Publishing does not wait on the grant — the grant names a principal, and the
+principal exists the moment the name is chosen — so the six contracts can go
+up now, and the bond admin can read what they are granting to.
 
 ```bash
-pnpm run build:testnet                     # -> build/testnet/vault-2.clar
+pnpm run build:testnet                     # -> build/testnet/vault-3.clar
 pnpm run plan:testnet STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM
 pnpm exec clarinet deployments apply --testnet \
   --manifest-path Clarinet-testnet.toml \
@@ -199,9 +183,9 @@ That plan is the launch. It runs three batches, each confirmed before the next:
 
 | batch | what |
 | --- | --- |
-| 0 | publishes `bond-treasury-2`, `vault-2`, `bond-bridge-2`, `esbee-dao-2`, in dependency order. The treasury and the bridge need no wiring: they identify each other through constants |
+| 0 | publishes `bond-treasury-3`, `iou-bond-btc-3`, `iou-bond-stx-3`, `vault-3`, `bond-bridge-3`, `esbee-dao-3`, in dependency order. The treasury, the receipts and the bridge need no wiring: they identify their callers through constants |
 | 1 | `initialize(ST1B38…signer-manager, <deployer>)` — deployer-only, once. Also trusts that manager's code hash with no notice period, since nobody has deposited yet |
-| 2 | `update-operator(<deployer>.esbee-dao-2, true)` — seats the DAO |
+| 2 | `update-operator(<deployer>.esbee-dao-3, true)` — seats the DAO |
 
 The deployer takes the operator seat in batch 1 rather than the DAO, because
 the DAO cannot vote until the pool has staked: voting weight is committed
@@ -212,31 +196,44 @@ the operators are, sweeps, and skipping a bond — in the members' hands.
 cannot retire itself here; doing that is a later call *from the DAO*, by vote.
 Leaving both seated is the right state for a testnet run.
 
-Then, as the operator:
+Then, once a bond with our grant exists — from anyone's key, since none of
+these is operator-only:
 
-| # | call | note |
-| --- | --- | --- |
-| 1 | `bind-bond(u4, u100000000, u0)` | the step with a deadline. Operator-only on the deployed `vault-2`; in the current source this is `bind-next-bond()`, permissionless and with no arguments. `deployments/testnet-bind-bond-4.yaml` is this call ready to apply |
-| 2 | `deposit(<sats>)` | moves both legs; the STX is pulled in the same call |
-| 3 | `stake(ST1B38…signer-manager)` | permissionless, inside the window, once the notice has run |
+| # | call | plan | note |
+| --- | --- | --- | --- |
+| 1 | `bind-next-bond()` | `deployments/testnet-bind-next-bond.yaml` | the step with a deadline: burn 13436 for bond 6. `find-next-bond` reports which bond it would take, `none` meaning the call would fail |
+| 2 | `withdraw()` on `vault-2` | `deployments/testnet-withdraw-vault-2.yaml` | gets our 0.045 BTC and 2.25 STX back to deposit here |
+| 3 | `deposit(u4500000)` | `deployments/deposit.testnet-plan.yaml` | moves both legs; the STX is pulled in the same call |
+| 4 | `stake(ST1B38…signer-manager)` | — | permissionless, inside the window, once the notice has run |
 
 Check before the last step with `get-stake-preview` — it reports `short-ustx`
-and whether the pool is `stx-limited` or `allocation-limited`. (The deployed
-`vault-2` also reports `meets-floor`; the launch floor is gone from the
-source.)
-Confirm afterwards with pox-5's `get-total-sbtc-staked-for-bond(u3)` — which
-already reads 19 500 sats from another staker, so compare the delta rather than
-the total.
+and whether the pool is `stx-limited` or `allocation-limited`. Confirm
+afterwards with pox-5's `get-total-sbtc-staked-for-bond`, or
+`pnpm run probe:testnet`, which prints the pool's membership.
+
+## Retiring `vault-2` (and `vault-1`)
+
+`vault-2` holds 0.595 BTC queued from several depositors and `vault-1` a
+further 0.05, none of it staked and none of it stakeable — both pools are
+bound to bonds whose windows have closed, and a permissionless
+`bind-next-bond` does not exist on either. Each deposit is its depositor's to
+take back with `withdraw`, in full, for as long as the pool never stakes, which
+is now forever. Ours is 0.045 BTC in `vault-2`; the rest belongs to whoever
+tested alongside, and they should be told the pool moved.
+
+Nothing else needs doing. An unbound pool is inert and costs nothing to leave
+standing.
 
 ## Re-reading the chain
 
 ```bash
-curl -s https://api.testnet.hiro.so/v2/info | python3 -c \
-  "import json,sys; print('burn', json.load(sys.stdin)['burn_block_height'])"
+pnpm run probe:testnet             # vault-1, vault-2, vault-3
+pnpm run probe:testnet vault-3     # any names to ask the grants about
 ```
 
-For bond state and allowances, the probe used to gather the table above reads
-`get-protocol-bond`, `bond-period-to-burn-height`, `get-bond-allowance` and
-`get-total-sbtc-staked-for-bond` off `ST000000000000000000002AMW42H.pox-5`
-through `@stacks/transactions`; run it from the project root so module
-resolution finds the dependency.
+It reads `get-pox-info`, `get-protocol-bond`, `bond-period-to-burn-height`,
+`get-bond-allowance`, `get-total-sbtc-staked-for-bond` and
+`get-bond-membership` off pox-5, and `get-pool`, `get-bound-bond` and
+`get-config` off each published pool, all through the public API. The bind
+deadlines it prints use the pool's own constants and pox-5's prepare length,
+so they are the ones `bind-next-bond` will enforce.

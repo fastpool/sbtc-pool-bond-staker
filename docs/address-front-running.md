@@ -35,7 +35,7 @@ mempool in the clear. The commit tells them nothing — it is
     5. attacker waits out REVEAL_DELAY
     6. attacker submits their reveal
     7. whichever reveal is mined first takes the address; the loser gets
-       ERR_ADDRESS_ANNOUNCED (u303)
+       ERR_ADDRESS_ANNOUNCED (u4003)
 
 The attacker wins only if the victim's reveal is **still unmined** when the
 attacker's reveal is mined. Everything below is about widening that gap.
@@ -57,7 +57,7 @@ Suppose the attacker copies the reveal verbatim — same address, **same salt**.
 The digest they compute is byte-identical, since a digest is only a function of
 `script` and `salt`. It still fails: the lookup is `{member: attacker, digest}`
 and the only entry that exists is `{member: victim, digest}`. They get
-`ERR_UNKNOWN_COMMITMENT (u312)`.
+`ERR_UNKNOWN_COMMITMENT (u4012)`.
 
 So the attacker has to create their own commitment, and `committed-at-height`
 on *theirs* is what `REVEAL_DELAY` is measured from. That is why step 5 exists
@@ -166,7 +166,7 @@ In order of effect:
    the address it revealed. This is the one that actually protects the money.
 3. **Use a fresh address.** One already visible on bitcoin can be pre-committed
    at leisure, and no delay helps.
-4. If a reveal fails with `u303`, cancel the commitment and retry with a
+4. If a reveal fails with `u4003`, cancel the commitment and retry with a
    different address.
 
 ## Why BNS-V2 can lean on its delay less

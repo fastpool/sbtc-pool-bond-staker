@@ -34,17 +34,52 @@ the built artefact against it.
 | contract | role |
 | --- | --- |
 | `bond-treasury` | holds the pooled sBTC principal |
+| `iou-bond-btc`, `iou-bond-stx` | receipts: a member's principal, as a token their wallet shows |
 | `bond-staker` | the ledger: deposits, shares, the bond position, rewards |
 | `bond-bridge` | the L1 bitcoin on-ramp and off-ramp |
 | `esbee-dao` | optional: the operator seat, held by the members |
 
 Deploy in that order — each calls the ones above it and is called by none of
-them, so there is no cycle to break. `bond-treasury` names its two callers as
-principal values, which do not have to exist yet.
+them, so there is no cycle to break. `bond-treasury` and the receipts name
+their callers as principal values, which do not have to exist yet.
+
+Each contract owns a block of error codes, so a code that bubbles up through
+`try!` names its origin: `bond-staker` u2000–2099, `bond-treasury` u3000,
+`bond-bridge` u4000–4099, `esbee-dao` u5000–5099, `iou-bond-btc` u6000,
+`iou-bond-stx` u7000. Below u1000 is pox-5 and sBTC (`sbtc-deposit` u3xx,
+`sbtc-withdrawal` u5xx); the Fast Pool signer manager uses u1000–1017.
 
 Because the principal lives in the treasury, any sBTC `bond-staker` holds is
 reward — there is no reserve to net off before splitting a payout. The STX leg
 is the exception: pox-5 locks the *staker's* STX, so the pool holds it.
+
+### Receipts
+
+A member's sBTC leaves their wallet at `deposit` and comes back at
+`claim-principal`, possibly a year later. In between, `iou-bond-btc` (`bondBTC`,
+8 decimals) and `iou-bond-stx` (`bondSTX`, 6 decimals) show where it is: a
+member's balance is their principal on the pool's books — queued, bonded or
+released, priced as deposited — and a second balance, `get-locked-balance`,
+is what they have sitting in an sBTC withdrawal request over the bridge.
+Supply equals the pool's totals at every block:
+
+    bondBTC supply        = queued-sats + bonded-sats + released-sats
+    bondBTC locked supply = withdrawing-sats
+    bondSTX supply        = queued-ustx + bonded-ustx + released-ustx
+
+Only `bond-staker` mints or burns them, at the four places a claim changes
+hands: booking a deposit (direct or bridged), paying principal out on Stacks,
+handing released sats to the bridge (`lock`), and the signers' verdict on that
+request (`burn-locked` on accepted, `unlock` on rejected). Rolls, haircuts and
+early exits only move principal between the pool's books, so they never touch
+a receipt. Rewards are not principal and have no receipt.
+
+The tokens are SIP-010 for wallets to read, and nothing more: `transfer`
+always fails. A receipt is a mirror of the ledger, not a claim that can be
+sold, so it follows the member and only the member. One consequence for
+front-ends: `claim-principal` and `claim-principal-to-btc` burn from the
+member, so a transaction the member signs in deny mode needs an FT
+post-condition for the receipt as well as for the sBTC.
 
 ## The three quantities
 
@@ -108,7 +143,7 @@ next one, and the roll after that is a whole bond term further on.
 | `initialize` | deployer, once | signer manager and operator |
 | `set-next-bond` | operator | a floor on which bond period comes next, which is how the members skip one. Optional |
 | `bind-next-bond` | **permissionless** | after the bond admin allowlists this contract. No arguments: index, allocation and terms all come from pox-5. Opens deposits |
-| `deposit` | anyone | while a bond is bound and has not started |
+| `deposit` | anyone | while a bond is bound and its stake window has not closed |
 | `deposit-stx` | anyone | to raise the STX behind the pool's sats |
 | `bond-bridge.commit-btc-address` / `reveal-btc-address` | anyone | to join with L1 bitcoin, naming the address it will come from and paying the STX leg |
 | `bond-bridge.claim-btc-address` | anyone | the same in one call, for an address they can sign with — see [the fast lane](#the-fast-lane) |
@@ -146,7 +181,14 @@ them before the fact:
   moment the call returns. `sync-rewards` is permissionless, so calling it first
   banks everything that has actually arrived. Only the live epoch's shares are
   at stake: while a previous epoch is still the one taking rewards, the member's
-  claim on it is a stash, which leaving the live bond does not touch.
+  claim on it is a stash, which leaving the live bond does not touch. The one
+  exception is the last member out: with no shares left, a pot that had arrived
+  could never be split, so that exit is refused while one is waiting
+  (`ERR_REWARDS_PENDING`, u2031; `get-early-unstake-preview` reports it as
+  `sync-first`) and goes through after a `sync-rewards` -- which hands the
+  member the whole pot. "Waiting" means what a sync would actually credit,
+  `get-recognizable-rewards`: the sub-share remainder the integer split can
+  leave behind is nobody's to recognise and does not hold the door.
 - **The rest of the bond is forfeited outright**, because pox-5 drops the
   unstaked sats from the current reward cycle as well as every later one.
 
@@ -484,7 +526,7 @@ points, not this contract's state.
 Everything the pool holds is otherwise reward, so those few lines are the one
 window where that sentence is not true. `principal-in-transit` records the
 amount, `get-unrecognized-rewards` subtracts it, and `sync-rewards` refuses
-outright while it is set (`ERR_PRINCIPAL_IN_TRANSIT`, u130) rather than
+outright while it is set (`ERR_PRINCIPAL_IN_TRANSIT`, u2030) rather than
 answering about a pool that is mid-move. Every other mutator a manager could
 reach from there moves sBTC, and would blow the roll's own `with-ft`
 post-condition before it could do any harm.
@@ -560,7 +602,7 @@ floor had no good owner. It could not be the DAO, which cannot vote before the
 pool has staked, and leaving it with the deployer key made the launch exactly
 the thing the rest of this is built to avoid.
 
-    a. deploy the four contracts
+    a. deploy the six contracts
     b. trust-signer-manager(hash) for each vetted signer manager
     c. update-operator(.esbee-dao, true)
     d. anyone calls bind-next-bond once the bond admin has allowlisted the pool
@@ -642,10 +684,14 @@ The genesis run ends by reading pox-5 back — `get-total-sbtc-staked-for-bond`
 and `get-bond-membership` — so the pool's registration is confirmed by the
 protocol rather than by our own accounting.
 
-**The bond does not exist yet.** `setup-bond` has not been called for any index,
-so the simulation creates it, and every parameter under `BOND` in
-`scripts/simulate-mainnet.mjs` is *our assumption*, not the protocol's. What is
-being tested is the shape of the run, not the yields it implies.
+**The genesis bond exists and allowlists us.** The bond admin's `setup-bond` for
+index 1 names `SPFCGF789WX1B737VQYAQ6BG3QYVMJGPDKRKYK00.esbee-dao-bond-staker-1`
+with 5 BTC of room, so the run takes the bond as it is — real pricing, real
+grant, the published `fastpool-max500-signer-manager` — and only simulates the
+allowlisting when the bond it lands on is not set up yet. In that case the
+parameters under `BOND` in `scripts/simulate-mainnet.mjs` are *our assumption*,
+not the protocol's, and what is being tested is the shape of the run, not the
+yields it implies.
 
 **The genesis bond is index 1, not 0.** The bond starting at burn height 966,350
 (reward cycle 143, [announced here][genesis]) is index 1; index 0 starts a cycle
@@ -662,15 +708,20 @@ assuming it.
       --manifest-path Clarinet-testnet.toml \
       --deployment-plan-path deployments/testnet-plan.yaml
 
-Needs a funded seed phrase in `settings/Testnet.toml` (gitignored;
-`clarinet deployments encrypt` keeps it out of plaintext).
+Mainnet is the same three commands with `mainnet` in place of `testnet`
+(`build:mainnet`, `plan:mainnet`, `Clarinet-mainnet.toml`,
+`deployments/mainnet-plan.yaml`); [MAINNET.md](MAINNET.md) is the runbook.
+
+Needs a funded seed phrase in `settings/Testnet.toml` or `settings/Mainnet.toml`
+(gitignored; `clarinet deployments encrypt` keeps it out of plaintext).
 
 `deployments/testnet-plan.yaml` is checked in as a template with `<DEPLOYER>`
 placeholders, so the syntax is there to read before you have an address;
 regenerating overwrites it in place (`--template` puts it back).
 
 The plan is three batches, each confirmed before the next: publish
-`bond-treasury`, the pool, `bond-bridge` and `esbee-dao` in dependency order;
+`bond-treasury`, the two receipts, the pool, `bond-bridge` and `esbee-dao` in
+dependency order;
 call `initialize`; then `update-operator(.esbee-dao, true)` to seat the DAO.
 The deployer takes the operator seat at `initialize` rather than the DAO
 because the DAO cannot vote until the pool has staked — see the launch sequence
@@ -680,37 +731,49 @@ The deployer address is a required argument because it appears throughout and
 `initialize` only accepts the contract's own deployer — a half-substituted plan
 would deploy under one identity and initialize under another. Publish fees are
 sized from the contract bytes at the fee rate in `settings/Testnet.toml`, and
-come to about 1.24 STX for the whole plan.
+come to about 1.3 STX for the whole plan.
 
 ### The pool's name is per network
 
-**On testnet the pool is published as `vault-2`, not `bond-staker`.** pox-5 keys
+**On testnet the pool is published as `vault-3`, not `bond-staker`.** pox-5 keys
 a bond's allowlist on the staker's *principal*, and a grant is only ever
 inserted by `setup-bond` — so a pool published under a name no grant mentions
-can never stake. The testnet grants spell `<deployer>.vault-1` and
-`<deployer>.vault-2`, and `vault-1` is taken, so `vault-2` is the name this
-build targets. Its three siblings take a `-2` for the same reason: a contract
-name cannot be reused at an address.
+can never stake, and the name is whatever the grant is asked for under. The
+grants so far spell `<deployer>.vault-1` and `<deployer>.vault-2`, and both
+names carry earlier pools that never staked, so the third is `vault-3` and
+needs a grant of its own — see [TESTNET.md](TESTNET.md). Its siblings
+take a `-3` for a duller reason: a contract name cannot be reused at an
+address, and their unsuffixed and `-2` names are spent.
 
-`build:testnet` therefore emits `build/testnet/vault-2.clar`, rewriting every
+`build:testnet` therefore emits `build/testnet/vault-3.clar`, rewriting every
 `.bond-staker` reference in the sibling contracts along with the file name; the
-plan generator and `Clarinet-testnet.toml` agree. `build:mainnet` keeps
-`bond-staker`. Nothing in `contracts/` changes, and the tests are unaffected.
+plan generator and `Clarinet-testnet.toml` agree. Nothing in `contracts/`
+changes, and the tests are unaffected.
 
-To publish under some other name again, pass `--staker-name` to both commands
-and rename the matching section in `Clarinet-testnet.toml`:
+**On mainnet the pool is `esbee-dao-bond-staker-1`**, because that is the name
+the genesis bond's `setup-bond` allowlisted (5 BTC, bond index 1). The siblings
+carry the same `-1` so the six contracts read as one deployment; the
+unsuffixed names were free, so this is a choice, not a constraint.
+`build:mainnet`, `plan:mainnet` and `Clarinet-mainnet.toml` agree on it.
 
-    pnpm run build:testnet -- --staker-name vault-3
-    pnpm run plan:testnet ST3YOUR…DEPLOYER -- --staker-name vault-3
+To publish under other names again, pass `--staker-name` and `--suffix` to
+both commands and rename the four matching sections in the network's
+`Clarinet-<network>.toml`:
+
+    pnpm run build:testnet -- --staker-name vault-4 --suffix -4
+    pnpm run plan:testnet ST3YOUR…DEPLOYER -- --staker-name vault-4 --suffix -4
 
 `initialize` binds the pool to a signer manager, which must already be
-registered with pox-5. The default is
+registered with pox-5. The testnet default is
 `ST1B38CGQRPXEMRH7B66VXTS22DQTNMSW4YJJ7QK1.signer-manager` — of the three in
 testnet's signer set it has the largest delegation and stays in through cycle
-10. Pass a different one as the second argument if that changes.
+10. The mainnet default is
+`SPMPMA1V6P430M8C91QS1G9XJ95S59JS1TZFZ4Q4.fastpool-max500-signer-manager`,
+the published Fast Pool manager, registered with pox-5. Pass a different one as
+the second argument if that changes.
 
 Deploying gets you an address, not a working pool: `find-next-bond` answers
-`none` and `bind-next-bond` returns `ERR_BOND_NOT_FOUND (u103)` until the bond
+`none` and `bind-next-bond` returns `ERR_BOND_NOT_FOUND (u2003)` until the bond
 admin names this contract in a `setup-bond`, and pox-5 only writes allowances
 there, so it has to be a bond that has not been created yet.
 

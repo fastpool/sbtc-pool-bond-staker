@@ -1,0 +1,22 @@
+---
+id: 0
+name: Withdraw from vault-2
+network: testnet
+stacks-node: "https://api.testnet.hiro.so"
+bitcoin-node: "http://blockstack:blockstacksystem@bitcoind.testnet.stacks.co:18332"
+plan:
+  batches:
+  - id: 0
+    transactions:
+    # withdraw() -- returns the caller's queued sats and uSTX in full. The
+    # deployed `vault-2` is bound to bond 5, which came and went unstaked, so
+    # every deposit in it is still queued and still the depositor's to take
+    # back. This is the deployer's own 4 500 000 sats and 2.25 STX; every
+    # other member has to make the same call for theirs.
+    - transaction-type: contract-call
+      contract-id: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM.vault-2
+      expected-sender: STFCGF789WX1B737VQYAQ6BG3QYVMJGPDJN4TJFM
+      method: withdraw
+      parameters: []
+      cost: 50000
+    epoch: '4.0'

@@ -1,0 +1,78 @@
+# Manifest for deploying to mainnet.
+#
+# Points at build/mainnet/, whose pox-5 address has been rewritten for the
+# network by `pnpm run build:mainnet` and whose simnet-only forms are stripped.
+# Regenerate that first; the sources in contracts/ name the testnet boot
+# address, which does not exist on mainnet.
+#
+#   pnpm run build:mainnet
+#   pnpm run plan:mainnet SP3YOUR…DEPLOYER
+#   clarinet deployments apply --mainnet --manifest-path Clarinet-mainnet.toml \
+#     --deployment-plan-path deployments/mainnet-plan.yaml
+#
+# What is actually published, and under which names, comes from that plan.
+# This file is the project context around it.
+#
+# If the pool is ever built under other names -- `build:mainnet -- --staker-name
+# esbee-dao-bond-staker-2 --suffix -2`, to match a grant that spells something
+# else -- the six `[contracts.*]` sections below have to be renamed to match,
+# both in their headers and in their paths. The plan generator takes the same
+# flags.
+#
+[project]
+name = "sbtc-pool-bond-staker"
+description = "Pooled sBTC + STX staker for pox-5 Bitcoin Staking Bonds"
+authors = []
+telemetry = false
+cache_dir = "./.cache"
+
+[repl.analysis]
+passes = ["check_checker"]
+check_checker = { trusted_sender = false, trusted_caller = false, callee_filter = false }
+
+[contracts]
+
+# The pool. Published as `esbee-dao-bond-staker-1`, because that is the name
+# the genesis bond's allowlist spells -- pox-5 keys a grant on the staker's
+# principal, and `build:mainnet` names the contract to match. See MAINNET.md.
+# Its siblings carry the same `-1`: each is wired to this pool by a constant
+# that cannot be re-pointed, so a later pool needs a set of its own, and a
+# contract name can never be reused at an address.
+#
+# Holds the pooled sBTC principal. Must be deployed before the pool, which
+# calls it; its own reference back is only a principal value.
+[contracts.bond-treasury-1]
+path = "build/mainnet/bond-treasury-1.clar"
+clarity_version = 6
+epoch = "4.0"
+
+# Receipt tokens for a member's principal, minted and burned by the pool.
+# Deployed before it; their reference back is only a principal value.
+[contracts.iou-bond-btc-1]
+path = "build/mainnet/iou-bond-btc-1.clar"
+clarity_version = 6
+epoch = "4.0"
+
+[contracts.iou-bond-stx-1]
+path = "build/mainnet/iou-bond-stx-1.clar"
+clarity_version = 6
+epoch = "4.0"
+
+[contracts.esbee-dao-bond-staker-1]
+path = "build/mainnet/esbee-dao-bond-staker-1.clar"
+clarity_version = 6
+epoch = "4.0"
+
+# The L1 on- and off-ramp. It calls the pool and the treasury; neither calls it.
+[contracts.bond-bridge-1]
+path = "build/mainnet/bond-bridge-1.clar"
+clarity_version = 6
+epoch = "4.0"
+
+# The pool's operator, held by its members. Deployed after the pool, which it
+# calls; the pool does not know about it, and is initialized with the deployer
+# as operator -- the DAO is seated afterwards with `update-operator`.
+[contracts.esbee-dao-1]
+path = "build/mainnet/esbee-dao-1.clar"
+clarity_version = 6
+epoch = "4.0"

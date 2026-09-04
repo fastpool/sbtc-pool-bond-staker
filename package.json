@@ -8,6 +8,9 @@
   "scripts": {
     "pretest": "node scripts/build-test-managers.mjs --check",
     "test": "vitest run",
+    "build:slides": "node docs/talk/build-slides.mjs",
+    "build:site": "node docs/talk/build-slides-html.mjs",
+    "deploy:site": "npx -y github:jooray/nsite-clay deploy site",
     "build:managers": "node scripts/build-test-managers.mjs",
     "test:report": "vitest run -- --coverage --costs",
     "test:watch": "chokidar \"tests/**/*.ts\" \"contracts/**/*.clar\" -c \"pnpm run test:report\"",
@@ -19,7 +22,10 @@
     "fuzz:test:v1": "node v1/scripts/build-rendezvous.mjs && rv ./v1 bond-staker test",
     "build:testnet": "node scripts/build-network.mjs testnet",
     "build:mainnet": "node scripts/build-network.mjs mainnet",
-    "plan:testnet": "node scripts/make-testnet-plan.mjs",
+    "plan:testnet": "node scripts/make-plan.mjs testnet",
+    "plan:mainnet": "node scripts/make-plan.mjs mainnet",
+    "probe:testnet": "node scripts/probe-chain.mjs testnet",
+    "probe:mainnet": "node scripts/probe-chain.mjs mainnet",
     "simulate:genesis": "node scripts/build-network.mjs mainnet && node scripts/simulate-mainnet.mjs genesis",
     "simulate:bridge": "node scripts/build-network.mjs mainnet && node scripts/simulate-mainnet.mjs bridge"
   },

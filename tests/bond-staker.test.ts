@@ -121,21 +121,21 @@ const firstCycleMidpoint = (index: number) =>
 
 describe("bond-staker: initialization and binding", () => {
   it("rejects deposits before a bond is bound", () => {
-    expect(deposit(alice, ALICE_SATS)).toBeErr(Cl.uint(118)); // NO_BOND_BOUND
+    expect(deposit(alice, ALICE_SATS)).toBeErr(Cl.uint(2018)); // NO_BOND_BOUND
   });
 
   it("only lets the deployer initialize, once", () => {
     registerSignerManager();
-    expect(initializePool(alice)).toBeErr(Cl.uint(100)); // UNAUTHORIZED
+    expect(initializePool(alice)).toBeErr(Cl.uint(2000)); // UNAUTHORIZED
     expect(initializePool().type).toBe("ok");
-    expect(initializePool()).toBeErr(Cl.uint(101)); // ALREADY_INITIALIZED
+    expect(initializePool()).toBeErr(Cl.uint(2001)); // ALREADY_INITIALIZED
   });
 
   it("finds nothing to bind until a bond wants us", () => {
     registerSignerManager();
     initializePool();
     expect(nextBond()).toBe(null);
-    expect(bindNextBond()).toBeErr(Cl.uint(103)); // BOND_NOT_FOUND
+    expect(bindNextBond()).toBeErr(Cl.uint(2003)); // BOND_NOT_FOUND
     setupBond();
     expect(nextBond()).toBe(BOND_INDEX);
   });
@@ -165,7 +165,7 @@ describe("bond-staker: initialization and binding", () => {
     expect(Number(bond["stake-closes-at"])).toBe(stakeWindowEnd(BOND_INDEX));
     expect(Number(bond["stake-opens-at"])).toBe(stakeWindowStart(BOND_INDEX));
 
-    expect(bindNextBond()).toBeErr(Cl.uint(119)); // BOND_ALREADY_BOUND
+    expect(bindNextBond()).toBeErr(Cl.uint(2019)); // BOND_ALREADY_BOUND
   });
 });
 
@@ -237,10 +237,10 @@ describe("bond-staker: the 95/5 deposit split", () => {
   });
 
   it("rejects a zero deposit and caps the pool at its allocation", () => {
-    expect(deposit(alice, 0)).toBeErr(Cl.uint(116)); // INVALID_AMOUNT
+    expect(deposit(alice, 0)).toBeErr(Cl.uint(2016)); // INVALID_AMOUNT
     // the allocation is the whole of what pox-5 allowlisted the pool for
     expect(deposit(alice, ALLOWANCE_SATS).type).toBe("ok");
-    expect(deposit(bob, 1)).toBeErr(Cl.uint(105)); // ALLOCATION_EXCEEDED
+    expect(deposit(bob, 1)).toBeErr(Cl.uint(2005)); // ALLOCATION_EXCEEDED
   });
 });
 
@@ -271,13 +271,27 @@ describe("bond-staker: withdrawing a queued deposit", () => {
   });
 
   it("has nothing to give an account that never deposited", () => {
-    expect(withdraw(carol)).toBeErr(Cl.uint(110)); // NOTHING_DEPOSITED
+    expect(withdraw(carol)).toBeErr(Cl.uint(2010)); // NOTHING_DEPOSITED
   });
 
   it("stays open if the pool never stakes", () => {
     deposit(alice, ALICE_SATS);
     advanceToBurnHeight(bondStartHeight(BOND_INDEX) + 10);
-    expect(deposit(alice, 1)).toBeErr(Cl.uint(109)); // TOO_LATE
+    expect(deposit(alice, 1)).toBeErr(Cl.uint(2009)); // TOO_LATE
+    expect(withdraw(alice).type).toBe("ok");
+  });
+
+  // A deposit in the prepare phase before the bond would be priced for a bond
+  // the pool can no longer enter, so the deposit book closes with the stake
+  // window rather than at the start height.
+  it("closes deposits where the stake window closes, not at the start", () => {
+    advanceToBurnHeight(stakeWindowEnd(BOND_INDEX) - 1);
+    expect(deposit(alice, ALICE_SATS).type).toBe("ok");
+    expect(depositStx(alice, 1).type).toBe("ok");
+
+    advanceToBurnHeight(stakeWindowEnd(BOND_INDEX));
+    expect(deposit(alice, 1)).toBeErr(Cl.uint(2009)); // TOO_LATE
+    expect(depositStx(alice, 1)).toBeErr(Cl.uint(2009));
     expect(withdraw(alice).type).toBe("ok");
   });
 });
@@ -292,9 +306,9 @@ describe("bond-staker: staking the first bond", () => {
   });
 
   it("is closed until the window opens", () => {
-    expect(stake()).toBeErr(Cl.uint(108)); // TOO_EARLY
+    expect(stake()).toBeErr(Cl.uint(2008)); // TOO_EARLY
     advanceToBurnHeight(stakeWindowStart(BOND_INDEX) - 1);
-    expect(stake()).toBeErr(Cl.uint(108));
+    expect(stake()).toBeErr(Cl.uint(2008));
   });
 
   // pox-5 will not register a staker inside the prepare phase before the bond,
@@ -307,14 +321,14 @@ describe("bond-staker: staking the first bond", () => {
 
   it("is too late from the prepare phase on", () => {
     advanceToBurnHeight(stakeWindowEnd(BOND_INDEX));
-    expect(stake()).toBeErr(Cl.uint(109)); // TOO_LATE
+    expect(stake()).toBeErr(Cl.uint(2009)); // TOO_LATE
     advanceToBurnHeight(bondStart);
-    expect(stake()).toBeErr(Cl.uint(109));
+    expect(stake()).toBeErr(Cl.uint(2009));
   });
 
   it("only accepts the signer manager the pool was bound to", () => {
     advanceToBurnHeight(bondStart - 288);
-    expect(stake(alice, ALT_MANAGER)).toBeErr(Cl.uint(111));
+    expect(stake(alice, ALT_MANAGER)).toBeErr(Cl.uint(2011));
   });
 
   it("is permissionless inside the window", () => {
@@ -378,17 +392,17 @@ describe("bond-staker: staking the first bond", () => {
     advanceToBurnHeight(bondStart - 288);
     stake();
     expect(boundBond().bound).toBe(false);
-    expect(deposit(carol, 1)).toBeErr(Cl.uint(118)); // NO_BOND_BOUND
-    expect(stake()).toBeErr(Cl.uint(118));
-    expect(withdraw(alice)).toBeErr(Cl.uint(110)); // nothing queued any more
-    expect(claimPrincipal(alice)).toBeErr(Cl.uint(114)); // nothing released
+    expect(deposit(carol, 1)).toBeErr(Cl.uint(2018)); // NO_BOND_BOUND
+    expect(stake()).toBeErr(Cl.uint(2018));
+    expect(withdraw(alice)).toBeErr(Cl.uint(2010)); // nothing queued any more
+    expect(claimPrincipal(alice)).toBeErr(Cl.uint(2014)); // nothing released
   });
 
   it("refuses to stake an empty pool", () => {
     withdraw(alice);
     withdraw(bob);
     advanceToBurnHeight(bondStart - 288);
-    expect(stake()).toBeErr(Cl.uint(110)); // NOTHING_DEPOSITED
+    expect(stake()).toBeErr(Cl.uint(2010)); // NOTHING_DEPOSITED
   });
 });
 
@@ -405,7 +419,7 @@ describe("bond-staker: rolling into the next bond", () => {
     // argument to reject.
     setupBond(NEXT_BOND_INDEX - 1);
     expect(nextBond()).toBe(null);
-    expect(bindNextBond()).toBeErr(Cl.uint(103)); // BOND_NOT_FOUND
+    expect(bindNextBond()).toBeErr(Cl.uint(2003)); // BOND_NOT_FOUND
   });
 
   it("carries the whole position across without unwinding it", () => {
@@ -465,7 +479,7 @@ describe("bond-staker: rolling into the next bond", () => {
     setupBond(NEXT_BOND_INDEX); // create it while there is still time
     advanceToBurnHeight(unlockHeight);
     expect(unstakeSbtc().type).toBe("ok");
-    expect(bindNextBond()).toBeErr(Cl.uint(112)); // ALREADY_UNSTAKED
+    expect(bindNextBond()).toBeErr(Cl.uint(2012)); // ALREADY_UNSTAKED
   });
 });
 
@@ -477,7 +491,7 @@ describe("bond-staker: leaving at a roll", () => {
   it("releases the member's principal and shares at the roll", () => {
     expect(requestExit(alice).type).toBe("ok");
     // nothing has moved yet -- the bond still holds it
-    expect(claimPrincipal(alice)).toBeErr(Cl.uint(114)); // nothing released
+    expect(claimPrincipal(alice)).toBeErr(Cl.uint(2014)); // nothing released
     expect(Number(poolTotals()["exiting-sats"])).toBe(ALICE_SATS);
 
     expect(rollInto().type).toBe("ok");
@@ -515,7 +529,7 @@ describe("bond-staker: leaving at a roll", () => {
     // pox-5 resized the STX lock down, so the STX is spendable again
     expect(stxBalance(alice)).toBe(stxBefore + ustx);
     expect(treasuryBalance()).toBe(0);
-    expect(claimPrincipal(alice)).toBeErr(Cl.uint(114)); // NOTHING_TO_CLAIM
+    expect(claimPrincipal(alice)).toBeErr(Cl.uint(2014)); // NOTHING_TO_CLAIM
   });
 
   it("refunds a queued deposit immediately", () => {
@@ -537,27 +551,27 @@ describe("bond-staker: leaving at a roll", () => {
     rollInto();
     // alice stayed, so she is still in
     expect(Number(epoch(1)["total-shares"])).toBe(POOL_SATS);
-    expect(cancelExit(alice)).toBeErr(Cl.uint(122)); // NOT_EXITING
+    expect(cancelExit(alice)).toBeErr(Cl.uint(2022)); // NOT_EXITING
 
     requestExit(bob);
     rollInto(NEXT_BOND_INDEX + 6);
     // the roll spent the request, so there is nothing left to call off
-    expect(cancelExit(bob)).toBeErr(Cl.uint(122)); // NOT_EXITING
+    expect(cancelExit(bob)).toBeErr(Cl.uint(2022)); // NOT_EXITING
   });
 
   it("frees allocation room for someone else", () => {
     // fill the pool right up, then have alice leave
     setupBond(NEXT_BOND_INDEX, POOL_SATS);
     bindNextBond();
-    expect(deposit(carol, 1)).toBeErr(Cl.uint(105)); // ALLOCATION_EXCEEDED
+    expect(deposit(carol, 1)).toBeErr(Cl.uint(2005)); // ALLOCATION_EXCEEDED
     requestExit(alice);
     expect(deposit(carol, ALICE_SATS).type).toBe("ok");
   });
 
   it("refuses an exit from someone with no committed position", () => {
-    expect(requestExit(carol)).toBeErr(Cl.uint(110)); // NOTHING_DEPOSITED
+    expect(requestExit(carol)).toBeErr(Cl.uint(2010)); // NOTHING_DEPOSITED
     expect(requestExit(alice).type).toBe("ok");
-    expect(requestExit(alice)).toBeErr(Cl.uint(123)); // ALREADY_EXITING
+    expect(requestExit(alice)).toBeErr(Cl.uint(2023)); // ALREADY_EXITING
   });
 
   it("clears the exit flag at the roll, so a leaver can come back", () => {
@@ -588,7 +602,7 @@ describe("bond-staker: leaving at a roll", () => {
     requestExit(alice);
     // still pending: the pool has not rolled, so it must still bar deposits
     expect(settledMember(alice)["exit-epoch"]).not.toBeNull();
-    expect(deposit(alice, ALICE_SATS)).toBeErr(Cl.uint(123)); // ALREADY_EXITING
+    expect(deposit(alice, ALICE_SATS)).toBeErr(Cl.uint(2023)); // ALREADY_EXITING
 
     expect(cancelExit(alice).type).toBe("ok");
     expect(settledMember(alice)["exit-epoch"]).toBeNull();
@@ -604,9 +618,9 @@ describe("bond-staker: winding down", () => {
   });
 
   it("holds the sBTC for the full 12 cycles", () => {
-    expect(unstakeSbtc()).toBeErr(Cl.uint(108)); // TOO_EARLY
+    expect(unstakeSbtc()).toBeErr(Cl.uint(2008)); // TOO_EARLY
     advanceToBurnHeight(unlockHeight - 1);
-    expect(unstakeSbtc()).toBeErr(Cl.uint(108));
+    expect(unstakeSbtc()).toBeErr(Cl.uint(2008));
   });
 
   it("returns the sBTC to the treasury and releases everyone", () => {
@@ -616,7 +630,7 @@ describe("bond-staker: winding down", () => {
     expect(treasuryBalance()).toBe(POOL_SATS);
     expect(sbtcBalance(poolPrincipal())).toBe(0);
     expect(poolConfig().finished).toBe(true);
-    expect(unstakeSbtc()).toBeErr(Cl.uint(112)); // ALREADY_UNSTAKED
+    expect(unstakeSbtc()).toBeErr(Cl.uint(2012)); // ALREADY_UNSTAKED
   });
 
   it("gives every member their deposit back, exactly", () => {
@@ -636,7 +650,7 @@ describe("bond-staker: winding down", () => {
 
     expect(treasuryBalance()).toBe(0);
     expect(Number(poolTotals()["released-sats"])).toBe(0);
-    expect(claimPrincipal(alice)).toBeErr(Cl.uint(114)); // NOTHING_TO_CLAIM
+    expect(claimPrincipal(alice)).toBeErr(Cl.uint(2014)); // NOTHING_TO_CLAIM
   });
 });
 
@@ -664,7 +678,7 @@ describe("bond-staker: per-bond reward accounting", () => {
     expect(sbtcBalance(alice)).toBe(
       before + (4_000_000 * ALICE_SATS) / POOL_SATS,
     );
-    expect(claimRewards(alice)).toBeErr(Cl.uint(114)); // NOTHING_TO_CLAIM
+    expect(claimRewards(alice)).toBeErr(Cl.uint(2014)); // NOTHING_TO_CLAIM
   });
 
   it("keeps each bond's rewards in its own epoch", () => {
@@ -846,7 +860,7 @@ describe("bond-staker: per-bond reward accounting", () => {
   });
 
   it("has nothing to recognise without a payout", () => {
-    expect(syncRewards()).toBeErr(Cl.uint(114)); // NOTHING_TO_CLAIM
+    expect(syncRewards()).toBeErr(Cl.uint(2014)); // NOTHING_TO_CLAIM
   });
 });
 
@@ -893,36 +907,36 @@ describe("bond-staker: moving to another signer", () => {
   it("is the operator's call, not anyone else's", () => {
     expect(
       updateBondRegistration(altPrincipal(), managerPrincipal(), alice),
-    ).toBeErr(Cl.uint(100)); // UNAUTHORIZED
+    ).toBeErr(Cl.uint(2000)); // UNAUTHORIZED
   });
 
   it("checks the current signer manager was named correctly", () => {
     expect(updateBondRegistration(altPrincipal(), altPrincipal())).toBeErr(
-      Cl.uint(111),
+      Cl.uint(2011),
     );
   });
 
   it("will not move onto a signer manager nobody vetted", () => {
     expect(canUseSigner(altPrincipal())).toBe(false);
     expect(updateBondRegistration(altPrincipal(), managerPrincipal())).toBeErr(
-      Cl.uint(126), // SIGNER_NOT_TRUSTED
+      Cl.uint(2026), // SIGNER_NOT_TRUSTED
     );
   });
 
   it("holds a newly trusted hash until the pool rolls", () => {
     const hash = signerHash(altPrincipal());
     expect(hash).toMatch(/^0x[0-9a-f]{64}$/);
-    expect(trustSigner(hash, alice)).toBeErr(Cl.uint(100)); // operator only
+    expect(trustSigner(hash, alice)).toBeErr(Cl.uint(2000)); // operator only
 
     expect(trustSigner(hash).type).toBe("ok");
     // on chain from the moment it is added, so members can see it coming
     expect(Number(trustedSigner(hash))).toBe(1);
     expect(canUseSigner(altPrincipal())).toBe(false);
     expect(updateBondRegistration(altPrincipal(), managerPrincipal())).toBeErr(
-      Cl.uint(126),
+      Cl.uint(2026),
     );
     // ...and re-adding must not restart the clock
-    expect(trustSigner(hash)).toBeErr(Cl.uint(127)); // ALREADY_TRUSTED
+    expect(trustSigner(hash)).toBeErr(Cl.uint(2027)); // ALREADY_TRUSTED
 
     // time alone does not unlock it -- only the roll does, because the roll is
     // the one moment a member who objects can be gone
@@ -954,13 +968,13 @@ describe("bond-staker: moving to another signer", () => {
     rollInto();
     expect(canUseSigner(altPrincipal())).toBe(true);
 
-    expect(distrustSigner(hash, alice)).toBeErr(Cl.uint(100)); // operator only
+    expect(distrustSigner(hash, alice)).toBeErr(Cl.uint(2000)); // operator only
     expect(distrustSigner(hash).type).toBe("ok");
     expect(canUseSigner(altPrincipal())).toBe(false);
     expect(updateBondRegistration(altPrincipal(), managerPrincipal())).toBeErr(
-      Cl.uint(126),
+      Cl.uint(2026),
     );
-    expect(distrustSigner(hash)).toBeErr(Cl.uint(126)); // nothing to remove
+    expect(distrustSigner(hash)).toBeErr(Cl.uint(2026)); // nothing to remove
   });
 
   it("re-points the position and the pool's own pin", () => {
@@ -1003,7 +1017,7 @@ describe("bond-treasury", () => {
           [Cl.uint(ALICE_SATS), Cl.principal(who)],
           who,
         ).result,
-      ).toBeErr(Cl.uint(200)); // UNAUTHORIZED
+      ).toBeErr(Cl.uint(3000)); // UNAUTHORIZED
     }
     expect(treasuryBalance()).toBe(ALICE_SATS);
     expect(
@@ -1196,7 +1210,7 @@ describe("bond-staker: a missed bond", () => {
     // bond that can no longer be staked.
     advanceToBurnHeight(stakeWindowEnd(BOND_INDEX));
     expect(bondStart).toBeGreaterThan(simnet.burnBlockHeight);
-    expect(stake()).toBeErr(Cl.uint(109)); // TOO_LATE
+    expect(stake()).toBeErr(Cl.uint(2009)); // TOO_LATE
     expect(boundBond().stakeable).toBe(false);
 
     // the pool is not stuck: the operator binds the next bond along
@@ -1213,7 +1227,7 @@ describe("bond-staker: a missed bond", () => {
   it("cannot be replaced while its window is still ahead", () => {
     bootstrap();
     expect(boundBond().stakeable).toBe(true);
-    expect(bindNextBond()).toBeErr(Cl.uint(119)); // ALREADY_BOUND
+    expect(bindNextBond()).toBeErr(Cl.uint(2019)); // ALREADY_BOUND
   });
 });
 
@@ -1265,9 +1279,9 @@ describe("bond-staker: leaving over the sBTC bridge", () => {
   it("is the member's call alone, and only for what they hold", () => {
     readyToLeave();
     // nobody can spend someone else's sats on a fee
-    expect(claimPrincipalToBtc(carol, MAX_FEE)).toBeErr(Cl.uint(110));
+    expect(claimPrincipalToBtc(carol, MAX_FEE)).toBeErr(Cl.uint(2010));
     // a fee bigger than the position is not a withdrawal
-    expect(claimPrincipalToBtc(alice, ALICE_SATS)).toBeErr(Cl.uint(116));
+    expect(claimPrincipalToBtc(alice, ALICE_SATS)).toBeErr(Cl.uint(2016));
   });
 
   it("burns the sats and pays out bitcoin when the signers accept", () => {
@@ -1292,7 +1306,7 @@ describe("bond-staker: leaving over the sBTC bridge", () => {
   it("puts the whole amount back when the signers reject", () => {
     readyToLeave();
     const id = Number(plain(claimPrincipalToBtc(alice, MAX_FEE) as any)["request-id"]);
-    expect(reclaimBtcWithdrawal(id)).toBeErr(Cl.uint(310)); // still pending
+    expect(reclaimBtcWithdrawal(id)).toBeErr(Cl.uint(4010)); // still pending
 
     expect(settleBtcWithdrawal(id, false).type).toBe("ok");
     expect(reclaimBtcWithdrawal(id, carol).type).toBe("ok"); // permissionless
@@ -1323,12 +1337,12 @@ describe("bond-staker: unattributed principal", () => {
     bootstrap();
     deposit(alice, ALICE_SATS);
     expect(unattributedPrincipal()).toBe(0);
-    expect(sweepUnattributed(deployer)).toBeErr(Cl.uint(114)); // nothing to take
+    expect(sweepUnattributed(deployer)).toBeErr(Cl.uint(2014)); // nothing to take
 
     // someone bridges to the treasury without announcing it
     sweepBtcDeposit("ff".repeat(32), 750_000);
     expect(unattributedPrincipal()).toBe(750_000);
-    expect(sweepUnattributed(carol, alice)).toBeErr(Cl.uint(100)); // UNAUTHORIZED
+    expect(sweepUnattributed(carol, alice)).toBeErr(Cl.uint(2000)); // UNAUTHORIZED
 
     const before = sbtcBalance(carol);
     expect(sweepUnattributed(carol).type).toBe("ok");
@@ -1358,7 +1372,7 @@ describe("bond-staker: the ledger's bridge hooks", () => {
     for (const [fn, args] of calls) {
       for (const who of [alice, deployer]) {
         expect(simnet.callPublicFn(POOL, fn, args, who).result).toBeErr(
-          Cl.uint(100), // UNAUTHORIZED
+          Cl.uint(2000), // UNAUTHORIZED
         );
       }
     }
@@ -1375,7 +1389,7 @@ describe("bond-staker: the ledger's bridge hooks", () => {
           [Cl.uint(1000), btcRecipient(), Cl.uint(10)],
           who,
         ).result,
-      ).toBeErr(Cl.uint(200)); // treasury UNAUTHORIZED
+      ).toBeErr(Cl.uint(3000)); // treasury UNAUTHORIZED
     }
     expect(plain(readTreasury("get-bridge"))).toBe(bridgePrincipal());
   });
@@ -1399,7 +1413,7 @@ describe("bond-staker: notice on a bound bond", () => {
     // passes the bond by rather than holding a slot it could never use
     advanceToBurnHeight(bondStart - LAST_BIND + 1);
     expect(nextBond()).toBe(null);
-    expect(bindNextBond()).toBeErr(Cl.uint(103)); // BOND_NOT_FOUND
+    expect(bindNextBond()).toBeErr(Cl.uint(2003)); // BOND_NOT_FOUND
   });
 
   it("gives the members the whole notice, and stakes the moment it is up", () => {
@@ -1418,7 +1432,7 @@ describe("bond-staker: notice on a bound bond", () => {
     deposit(alice, ALICE_SATS);
     // a block before the window, the notice is still running
     advanceToBurnHeight(stakeWindowStart(BOND_INDEX) - 1);
-    expect(stake()).toBeErr(Cl.uint(108)); // TOO_EARLY
+    expect(stake()).toBeErr(Cl.uint(2008)); // TOO_EARLY
 
     // and the window opens exactly as the notice ends
     advanceToBurnHeight(stakeWindowStart(BOND_INDEX));
@@ -1437,10 +1451,10 @@ describe("bond-staker: rotating the operator", () => {
   });
 
   it("is only for operators, and never for your own entry", () => {
-    expect(updateOperator(bob, true, alice)).toBeErr(Cl.uint(100));
+    expect(updateOperator(bob, true, alice)).toBeErr(Cl.uint(2000));
     // an operator cannot disable themselves, so the seat cannot be dropped by
     // one key acting alone
-    expect(updateOperator(deployer, false, deployer)).toBeErr(Cl.uint(100));
+    expect(updateOperator(deployer, false, deployer)).toBeErr(Cl.uint(2000));
   });
 
   it("hands the seat over in two moves", () => {
@@ -1453,7 +1467,7 @@ describe("bond-staker: rotating the operator", () => {
     expect(updateOperator(deployer, false, alice).type).toBe("ok");
     expect(isOperator(deployer)).toBe(false);
     // binding needs no seat, so the seat is tested on what it still holds
-    expect(setNextBond(NEXT_BOND_INDEX)).toBeErr(Cl.uint(100)); // old key out
+    expect(setNextBond(NEXT_BOND_INDEX)).toBeErr(Cl.uint(2000)); // old key out
 
     // and the new one can do the job
     expect(setNextBond(NEXT_BOND_INDEX, alice).type).toBe("ok");
@@ -1484,13 +1498,13 @@ describe("bond-staker: the members' floor on the next bond", () => {
   it("is only for operators, and only within reach", () => {
     registerSignerManager();
     initializePool();
-    expect(setNextBond(BOND_INDEX + 1, alice)).toBeErr(Cl.uint(100));
+    expect(setNextBond(BOND_INDEX + 1, alice)).toBeErr(Cl.uint(2000));
     expect(setNextBond(BOND_INDEX + 1).type).toBe("ok");
     expect(Number(poolConfig()["min-bond-index"])).toBe(BOND_INDEX + 1);
 
     // a floor nobody could ever reach is refused rather than stored: pox-5
     // works a start height out by multiplying, and an absurd index aborts
-    expect(setNextBond(1_000_000_000)).toBeErr(Cl.uint(120)); // INVALID_BOND_INDEX
+    expect(setNextBond(1_000_000_000)).toBeErr(Cl.uint(2020)); // INVALID_BOND_INDEX
     expect(Number(poolConfig()["min-bond-index"])).toBe(BOND_INDEX + 1);
   });
 
@@ -1503,7 +1517,7 @@ describe("bond-staker: the members' floor on the next bond", () => {
     // the next one and the pair could be walked out a hundred at a time.
     const reach = num(readPool("earliest-reachable-bond")) + 100;
     expect(setNextBond(reach).type).toBe("ok");
-    expect(setNextBond(reach + 1)).toBeErr(Cl.uint(120)); // INVALID_BOND_INDEX
+    expect(setNextBond(reach + 1)).toBeErr(Cl.uint(2020)); // INVALID_BOND_INDEX
   });
 
   it("skips the bond it is set past, and gives it back when cleared", () => {
@@ -1515,7 +1529,7 @@ describe("bond-staker: the members' floor on the next bond", () => {
     // the members sit this one out
     expect(setNextBond(BOND_INDEX + 1).type).toBe("ok");
     expect(nextBond()).toBe(null);
-    expect(bindNextBond()).toBeErr(Cl.uint(103)); // BOND_NOT_FOUND
+    expect(bindNextBond()).toBeErr(Cl.uint(2003)); // BOND_NOT_FOUND
 
     // a floor of zero is no floor at all
     expect(setNextBond(0).type).toBe("ok");

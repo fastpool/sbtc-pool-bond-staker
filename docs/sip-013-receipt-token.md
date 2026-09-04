@@ -194,8 +194,9 @@ sender not authorised. So there are two things to get right rather than one.
 
 - **Do not return `u4`.** It means "you are not the owner", and a caller who
   *is* the owner would read it as a bug in their own code. Use a dedicated
-  error in the vault's own range — the treasury already sits at `u200`, so
-  `ERR_NOT_TRANSFERABLE (err u201)`.
+  error in the token's own range — each contract here owns a thousand
+  (`iou-bond-btc` u6000, `iou-bond-stx` u7000), so `ERR_NOT_TRANSFERABLE`
+  is `u6001` and `u7001`.
 - **Implement the trait anyway.** Being listed is the entire point of minting a
   receipt. Say "non-transferable" in the SIP-016 metadata so a client that
   reads it can grey out the control rather than discovering the refusal on

@@ -13,10 +13,10 @@
 # What is actually published, and under which names, comes from that plan.
 # This file is the project context around it.
 #
-# If the pool is ever built under another name -- `build:testnet -- --staker-name
-# vault-3`, to match a grant that spells something else -- the `[contracts.vault-2]`
-# section below has to be renamed to match, both in its header and in its path.
-# The plan generator takes the same flag.
+# If the pool is ever built under other names -- `build:testnet -- --staker-name
+# vault-4 --suffix -4`, to match a grant that spells something else -- the six
+# `[contracts.*]` sections below have to be renamed to match, both in their
+# headers and in their paths. The plan generator takes the same flags.
 #
 [project]
 name = "sbtc-pool-bond-staker"
@@ -31,39 +31,51 @@ check_checker = { trusted_sender = false, trusted_caller = false, callee_filter 
 
 [contracts]
 
-# Every contract here carries a `-2`, because a contract name can never be
-# reused at an address and the whole of the first deployment -- `vault-1` and
-# its three siblings -- is already published. `build:testnet` appends the
-# suffix and rewrites every reference between them; nothing in `contracts/`
-# changes.
+# Every contract here carries a `-3`, because a contract name can never be
+# reused at an address and two whole deployments -- `vault-1` with its three
+# unsuffixed siblings, `vault-2` with its `-2` ones -- are already published.
+# `build:testnet` appends the suffix and rewrites every reference between them;
+# nothing in `contracts/` changes.
 #
 # Holds the pooled sBTC principal. Must be deployed before the pool, which
 # calls it; its own reference back is only a principal value.
-[contracts.bond-treasury-2]
-path = "build/testnet/bond-treasury-2.clar"
+[contracts.bond-treasury-3]
+path = "build/testnet/bond-treasury-3.clar"
 clarity_version = 6
 epoch = "4.0"
 
-# The pool. Published as `vault-2` on testnet, because that is a name the
-# bonds' allowlist grants spell -- pox-5 keys a grant on the staker's principal,
-# and `build:testnet` names the contract to match. The grants cover `vault-1`
-# too, but that one is already published, carrying the earlier pool under
-# `v1/`.
-[contracts.vault-2]
-path = "build/testnet/vault-2.clar"
+# The pool. Published as `vault-3` on testnet: pox-5 keys a bond's allowlist
+# grant on the staker's principal, so the name is whatever the grant spells,
+# and `build:testnet` names the contract to match. The existing grants spell
+# `vault-1` and `vault-2`, and both names carry earlier pools -- so `vault-3`
+# needs a grant of its own on a bond not yet set up. See TESTNET.md.
+# Receipt tokens for a member's principal, minted and burned by the pool.
+# Deployed before it; their reference back is only a principal value.
+[contracts.iou-bond-btc-3]
+path = "build/testnet/iou-bond-btc-3.clar"
 clarity_version = 6
 epoch = "4.0"
 
-# The L1 on- and off-ramp. It calls the two above, and neither calls it.
-[contracts.bond-bridge-2]
-path = "build/testnet/bond-bridge-2.clar"
+[contracts.iou-bond-stx-3]
+path = "build/testnet/iou-bond-stx-3.clar"
+clarity_version = 6
+epoch = "4.0"
+
+[contracts.vault-3]
+path = "build/testnet/vault-3.clar"
+clarity_version = 6
+epoch = "4.0"
+
+# The L1 on- and off-ramp. It calls the pool and the treasury; neither calls it.
+[contracts.bond-bridge-3]
+path = "build/testnet/bond-bridge-3.clar"
 clarity_version = 6
 epoch = "4.0"
 
 # The pool's operator, held by its members. Deployed after the pool, which it
 # calls; the pool does not know about it, and is initialized with the deployer
 # as operator -- the DAO is seated afterwards with `update-operator`.
-[contracts.esbee-dao-2]
-path = "build/testnet/esbee-dao-2.clar"
+[contracts.esbee-dao-3]
+path = "build/testnet/esbee-dao-3.clar"
 clarity_version = 6
 epoch = "4.0"

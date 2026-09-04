@@ -1,104 +1,49 @@
 ;; Esbee DAO
 ;;
-;; The pool's operator, held by its members rather than by a key.
-;;
-;; `bond-staker` lets an operator do five things: put a floor under which bond
-;; period comes next, move the pool between vetted signer managers, add and
-;; remove hashes from the trusted list, change who the operators are, and sweep
-;; unattributed principal. It can never touch deposits, and it can never stop
-;; members leaving. This contract puts all five behind a vote.
-;;
-;; Binding itself is not on that list and needs no vote: `bind-next-bond` is
-;; permissionless and takes no arguments, so anyone can make the call and every
-;; caller writes the same state. What a vote is for is the judgement the
-;; arithmetic cannot make -- sitting a bond out -- and `set-next-bond` is that
-;; and nothing more. A bond has to be bound inside the window pox-5 allows for
-;; it, which a vote with a period, a delay and a quorum cannot be relied on to
-;; hit; the point of the floor is that it can be set long before the window and
-;; simply waits there for whoever binds.
-;;
-;; Install it by having the sitting operator enable it and then retire itself:
-;;
-;;     bond-staker.update-operator(.esbee-dao, true)     ;; sitting operator
-;;     bond-staker.update-operator(<old key>, false)     ;; from the DAO, or a
-;;;;                                                        second operator
-;;
-;; `bond-staker` checks `tx-sender`, so every call out of here is wrapped in
-;; `as-contract?` -- that is what makes this contract, rather than the member
-;; who pressed the button, the operator.
-;;
-;; Who votes, and with how much
-;;
-;; A member's weight is the square root of their committed sats:
-;; sqrt-weighted voting, so a holder ten thousand times larger than another has
-;; a hundred times the say rather than ten thousand. It is the shape usually
-;; meant by "quadratic voting" in a DAO, without the per-voter credit budget
-;; that needs an identity system to be worth anything.
-;;
-;; Only *committed* shares count. A queued deposit is withdrawable on demand, so
-;; counting it would let anyone rent a majority for the length of one
-;; transaction: deposit, vote, withdraw. Committed sats are locked in the bond
-;; for its term, which makes weight something a voter has to actually hold.
-;;
-;; Nothing passes quietly
-;;
-;; Silence is not consent, and neither is speed. A proposal has to clear all of:
-;;
-;;   * a voting period, so it cannot be raised and settled in one block
-;;   * a quorum, so an empty room does not decide
-;;   * a supermajority of the votes cast
-;;   * a delay between passing and executing, so members who dislike the
-;;     outcome can `request-exit` before it lands
-;;   * an execution window, so a stale mandate cannot be dusted off months later
-;;   * the same epoch throughout: if the pool rolls, the membership that voted
-;;     is not the membership that would live with it, and the proposal is void
-;;
-;; Every one of those is a line that has to be crossed in the open: proposing,
-;; voting and executing all emit a `print` an indexer can watch.
+;; Operator of `bond-staker`, driven by member vote. Puts the five operator
+;; powers behind a proposal: set-next-bond, update-bond-registration,
+;; trust/distrust-signer-manager, update-operator, sweep-unattributed-principal.
+;; Weight = sqrti(committed sats); queued deposits do not count.
+;; A proposal needs: voting period, quorum, supermajority, execution delay,
+;; execution window, unchanged epoch. Calls out via `as-contract?` so the DAO
+;; is the operator. Install: update-operator(.esbee-dao, true), then retire
+;; the old operator. `bind-next-bond` stays permissionless; votes set the floor.
 
 (use-trait signer-manager-trait 'ST000000000000000000002AMW42H.pox-5.signer-manager-trait)
 
-(define-constant ERR_UNAUTHORIZED (err u400))
-(define-constant ERR_NOT_A_MEMBER (err u401))
-(define-constant ERR_NO_LIVE_EPOCH (err u402))
-(define-constant ERR_UNKNOWN_PROPOSAL (err u403))
-(define-constant ERR_VOTING_CLOSED (err u404))
-(define-constant ERR_VOTING_OPEN (err u405))
-(define-constant ERR_ALREADY_VOTED (err u406))
-(define-constant ERR_NO_QUORUM (err u407))
-(define-constant ERR_REJECTED (err u408))
-(define-constant ERR_TOO_EARLY (err u409))
-(define-constant ERR_EXPIRED (err u410))
-(define-constant ERR_ALREADY_EXECUTED (err u411))
-(define-constant ERR_WRONG_KIND (err u412))
-(define-constant ERR_EPOCH_MOVED (err u413))
-(define-constant ERR_WRONG_TARGET (err u414))
+(define-constant ERR_NOT_A_MEMBER (err u5001))
+(define-constant ERR_NO_LIVE_EPOCH (err u5002))
+(define-constant ERR_UNKNOWN_PROPOSAL (err u5003))
+(define-constant ERR_VOTING_CLOSED (err u5004))
+(define-constant ERR_VOTING_OPEN (err u5005))
+(define-constant ERR_ALREADY_VOTED (err u5006))
+(define-constant ERR_NO_QUORUM (err u5007))
+(define-constant ERR_REJECTED (err u5008))
+(define-constant ERR_TOO_EARLY (err u5009))
+(define-constant ERR_EXPIRED (err u5010))
+(define-constant ERR_ALREADY_EXECUTED (err u5011))
+(define-constant ERR_WRONG_KIND (err u5012))
+(define-constant ERR_EPOCH_MOVED (err u5013))
+(define-constant ERR_WRONG_TARGET (err u5014))
 
 ;;; How long each stage lasts, in burn blocks
 
-;; ~2 days of voting. Long enough that a proposal cannot be raised and settled
-;; before anyone has looked at it.
+;; ~2 days.
 (define-constant VOTING_PERIOD u288)
 
-;; ~1 day between a proposal passing and anyone being able to execute it. This
-;; is the members' room to act on an outcome they do not like.
+;; ~1 day after voting ends before execution; room to `request-exit`.
 (define-constant EXECUTION_DELAY u144)
 
-;; ~1 week to execute, after which the mandate goes stale. A vote taken under
-;; one set of circumstances should not be executable under another.
+;; ~1 week to execute after the delay; expired proposals are void.
 (define-constant EXECUTION_WINDOW u1008)
 
 ;;; What it takes to pass
 
-;; Share of the pool's voting weight that has to turn out, in basis points.
-;;
-;; Measured against the square root of the epoch's total shares, which is a
-;; *lower* bound on the true total of the members' individual roots -- the more
-;; evenly held the pool, the further below. So this is a floor rather than an
-;; exact fraction, and it is set high to compensate.
+;; Turnout required, in bips of sqrti(epoch total-shares) -- a lower bound on
+;; the sum of member weights, hence set high.
 (define-constant QUORUM_BIPS u3000)
 
-;; Share of the votes cast that have to be in favour, in basis points.
+;; Yes share of votes cast required, in bips.
 (define-constant APPROVAL_BIPS u6000)
 
 (define-constant MAX_BIPS u10000)
@@ -110,20 +55,16 @@
 (define-map proposals
   uint
   {
-    ;; Which of the operator's five powers this asks for.
+    ;; One of: trust-signer, distrust-signer, signer-change, operator-change,
+    ;; next-bond, sweep. Parameters below are typed fields; each kind uses some.
     kind: (string-ascii 24),
-    ;; The parameters, only those the kind uses. Kept as plain fields rather
-    ;; than an opaque payload so that what was voted on is legible on chain.
     code-hash: (optional (buff 32)),
     target: (optional principal),
     previous: (optional principal),
     enabled: (optional bool),
-    ;; A bond period, for `next-bond`. The only kind that carries a number.
     index: (optional uint),
     proposer: principal,
-    ;; The epoch the pool was in when this was raised. If it rolls, the
-    ;; membership that voted is no longer the membership that would live with
-    ;; the result.
+    ;; `epoch-count` at proposal time; execution requires it unchanged.
     epoch: uint,
     created-at: uint,
     voting-ends-at: uint,
@@ -146,7 +87,7 @@
 
 ;;; Read-only
 
-;; A member's say: the square root of their committed sats.
+;; sqrti of the member's committed shares; 0 for non-members.
 (define-read-only (get-weight (who principal))
   (match (contract-call? .bond-staker get-settled-member who)
     record (sqrti (get shares record))
@@ -154,8 +95,7 @@
   )
 )
 
-;; The turnout a proposal needs. Zero before the pool has ever staked, which is
-;; why proposing and executing both require a live epoch.
+;; Required turnout; 0 without a live epoch, so proposing requires one.
 (define-read-only (get-quorum)
   (match (contract-call? .bond-staker get-live-epoch)
     live (/ (* (sqrti (get total-shares live)) QUORUM_BIPS) MAX_BIPS)
@@ -181,8 +121,7 @@
   (var-get proposal-count)
 )
 
-;; Everything standing between a proposal and execution, in one read. `ready`
-;; is the whole test; the rest says which line is still uncrossed.
+;; All execution conditions for `id`; `ready` is their conjunction.
 (define-read-only (get-status (id uint))
   (match (map-get? proposals id)
     proposal (let (
@@ -227,10 +166,7 @@
   (get epoch-count (contract-call? .bond-staker get-config))
 )
 
-;;; Raising a proposal
-;;
-;; One entry point per power, so the parameters are typed and a proposal cannot
-;; be raised with the fields of one kind and executed as another.
+;;; Raising a proposal -- one typed entry point per kind
 
 (define-private (open-proposal (fields {
   kind: (string-ascii 24),
@@ -241,11 +177,8 @@
   index: (optional uint),
 }))
   (let ((id (var-get proposal-count)))
-    ;; Only a member with something committed may raise one. Nothing else is a
-    ;; usable filter here: anyone can hold an address.
     (asserts! (> (get-weight tx-sender) u0) ERR_NOT_A_MEMBER)
-    ;; No live epoch means no quorum to clear, which would make every proposal
-    ;; a formality.
+    ;; Without a live epoch the quorum is 0.
     (asserts! (is-some (contract-call? .bond-staker get-live-epoch))
       ERR_NO_LIVE_EPOCH
     )
@@ -322,19 +255,8 @@
   })
 )
 
-;; Skip a bond, or aim at a particular one.
-;;
-;; `bind-next-bond` takes the earliest period pox-5 has set this pool up for.
-;; This is how the members say "not that one": a floor of N + 1 skips bond N,
-;; and a floor of M aims at bond M. It binds nothing itself, so it can be voted
-;; on at any time and sits there until the next bind reads it.
-;;
-;; Which is the one thing to know about timing it: the floor is read *at* the
-;; bind, and a bind cannot be replaced until the bond it named has started. So
-;; a skip has to be through before the bond admin allowlists the period. A vote
-;; that opens once the period is already bindable has missed it -- anyone may
-;; bind in the meantime, and what the members have left then is the notice and
-;; the exit rather than the skip.
+;; Floor for `bind-next-bond`: index N+1 skips bond N. Read at bind time, so
+;; the vote must complete before the bond becomes bindable.
 (define-public (propose-next-bond (index uint))
   (open-proposal {
     kind: "next-bond",
@@ -359,8 +281,7 @@
 
 ;;; Voting
 
-;; Weight is read now rather than at proposal time, and recorded, so a later
-;; change to a member's position cannot rewrite a vote already cast.
+;; Weight is read and recorded at vote time; one vote per member per proposal.
 (define-public (vote
     (id uint)
     (support bool)
@@ -408,10 +329,7 @@
   )
 )
 
-;;; Execution
-;;
-;; Anyone may execute a proposal that has cleared every line -- the mandate is
-;; the vote, not the executor.
+;;; Execution -- permissionless once `get-status` reports `ready`
 
 (define-private (authorize-execution
     (id uint)
@@ -421,8 +339,6 @@
       (proposal (unwrap! (map-get? proposals id) ERR_UNKNOWN_PROPOSAL))
       (status (unwrap! (get-status id) ERR_UNKNOWN_PROPOSAL))
     )
-    ;; The kind is checked against the entry point, so a mandate for one power
-    ;; can never be spent on another.
     (asserts! (is-eq (get kind proposal) kind) ERR_WRONG_KIND)
     (asserts! (not (get executed proposal)) ERR_ALREADY_EXECUTED)
     (asserts! (not (get voting-open status)) ERR_VOTING_OPEN)
@@ -464,8 +380,7 @@
   )
 )
 
-;; The trait references cannot be stored, so the executor supplies them and the
-;; contract checks they are the ones that were voted on.
+;; Traits cannot be stored: the executor passes them, checked against the vote.
 (define-public (execute-signer-change
     (id uint)
     (manager <signer-manager-trait>)
