@@ -514,7 +514,9 @@
 (define-read-only (get-unattributed-principal)
   (let (
       (balance (get-treasury-balance))
-      (accounted (+ (var-get queued-sats) (var-get released-sats) (var-get withdrawing-sats)))
+      (accounted (+ (var-get queued-sats) (var-get released-sats) (var-get withdrawing-sats)
+        (var-get announced-sats)
+      ))
     )
     (if (> balance accounted)
       (- balance accounted)

@@ -49,6 +49,7 @@ import {
   stake,
   stxBalance,
   sweepBtcDeposit,
+  sweepUnattributed,
   treasuryBalance,
   treasuryPrincipal,
   unattributedPrincipal,
@@ -905,6 +906,89 @@ describe("bond-bridge: completing a deposit", () => {
         ]) as any,
       ),
     ).toBe(`0x${scriptFor("04", ALICE_HASH)}`);
+  });
+});
+
+/**
+ * The window between the signers' mint and `complete-btc-deposit`: the sats sit
+ * in the treasury with nothing crediting them to anyone yet, and the only
+ * record that they are spoken for is `announced-sats`. The operator's sweep
+ * reads what the books do not account for, so the announcement has to count as
+ * accounted or the sweep would carry off a deposit that has landed but not
+ * been claimed.
+ */
+describe("bond-bridge: the sweep and a deposit in flight", () => {
+  const STRAY = 750_000;
+
+  it("does not read a landed but uncredited deposit as unattributed", () => {
+    bootstrap();
+    const funded = joinFromBitcoin(alice, ALICE_SATS);
+
+    // the sats are in the treasury and no member record says so yet
+    expect(treasuryBalance()).toBe(ALICE_SATS);
+    expect(Number(poolTotals()["announced-sats"])).toBe(ALICE_SATS);
+    expect(member(alice)).toBeNull();
+
+    // ...and there is still nothing above the books for the operator to take
+    expect(unattributedPrincipal()).toBe(0);
+    expect(sweepUnattributed(carol)).toBeErr(Cl.uint(2014)); // NOTHING_TO_CLAIM
+
+    // the deposit credits in full once it is claimed
+    expect(completeBtcDeposit(funded.txid, funded.tx, funded.parents).type).toBe(
+      "ok",
+    );
+    expect(Number(member(alice)["queued-sats"])).toBe(ALICE_SATS);
+    expect(treasuryBalance()).toBe(ALICE_SATS);
+    expect(unattributedPrincipal()).toBe(0);
+  });
+
+  it("sweeps what arrived beyond the announcement and no more", () => {
+    bootstrap();
+    const extra = 5_000;
+    expect(announceBtcAddress(alice, ALICE_SATS, aliceAddress).type).toBe("ok");
+    const funded = depositFrom(ALICE_HASH);
+    expect(sweep(funded.txid, ALICE_SATS + extra).type).toBe("ok");
+
+    // only the overpayment stands above the books
+    expect(treasuryBalance()).toBe(ALICE_SATS + extra);
+    expect(unattributedPrincipal()).toBe(extra);
+
+    const before = sbtcBalance(carol);
+    expect(sweepUnattributed(carol).type).toBe("ok");
+    expect(sbtcBalance(carol)).toBe(before + extra);
+
+    // the announced sats stayed behind, and alice is credited every one
+    expect(treasuryBalance()).toBe(ALICE_SATS);
+    expect(completeBtcDeposit(funded.txid, funded.tx, funded.parents).type).toBe(
+      "ok",
+    );
+    expect(Number(member(alice)["queued-sats"])).toBe(ALICE_SATS);
+    expect(unattributedPrincipal()).toBe(0);
+  });
+
+  it("cannot reach a stray while an announcement is outstanding", () => {
+    bootstrap();
+    // bridged to the treasury without announcing it: nobody's principal
+    expect(sweepBtcDeposit("ff".repeat(32), STRAY).type).toBe("ok");
+    expect(unattributedPrincipal()).toBe(STRAY);
+
+    // an announcement whose sats are still on bitcoin reserves room the
+    // treasury does not hold, and that masks the stray. Conservative, and the
+    // price of never sweeping a deposit in flight: the sweep is blocked, and
+    // nothing is lost.
+    expect(announceBtcAddress(alice, ALICE_SATS, aliceAddress).type).toBe("ok");
+    expect(treasuryBalance()).toBe(STRAY);
+    expect(unattributedPrincipal()).toBe(0);
+    expect(sweepUnattributed(carol)).toBeErr(Cl.uint(2014));
+
+    // dropping the announcement gives the room back, and the stray with it
+    expect(cancelBtcAddress(aliceAddress, alice).type).toBe("ok");
+    expect(Number(poolTotals()["announced-sats"])).toBe(0);
+    expect(unattributedPrincipal()).toBe(STRAY);
+
+    const before = sbtcBalance(carol);
+    expect(sweepUnattributed(carol).type).toBe("ok");
+    expect(sbtcBalance(carol)).toBe(before + STRAY);
   });
 });
 
